@@ -55,8 +55,7 @@ frontend/uploads/
 uploads/
 
 
-*.md
-!README.md
+
 
 .env.e2e
 
