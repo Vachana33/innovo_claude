@@ -5,6 +5,8 @@ You are working on a production-grade AI document generation system.
 This repository powers a deployed application used by real clients.
 Code changes must prioritize safety, clarity, and incremental improvements.
 
+---
+
 ## Development Principles
 
 1. Never perform large refactors without explicit approval.
@@ -14,6 +16,8 @@ Code changes must prioritize safety, clarity, and incremental improvements.
 5. Do not modify environment variables.
 6. Do not modify deployment scripts (Render, Docker) unless instructed.
 
+---
+
 ## Code Quality
 
 - Follow clean architecture principles.
@@ -21,30 +25,40 @@ Code changes must prioritize safety, clarity, and incremental improvements.
 - Do not duplicate logic.
 - Keep functions focused and readable.
 
+---
+
 ## Backend
 
 Backend uses:
+
 - FastAPI
 - SQLAlchemy
 - Alembic
 - PostgreSQL in production
 
 When modifying backend code:
+
 - preserve API contracts
 - avoid changing response shapes
 - avoid breaking existing endpoints
 
+---
+
 ## Frontend
 
 Frontend uses:
+
 - React
 - TypeScript
 - Vite
 
 When modifying frontend code:
+
 - maintain existing UX flows
 - avoid introducing new global state
 - prefer small component improvements
+
+---
 
 ## AI Generation System
 
@@ -52,10 +66,12 @@ The application generates funding program documents using LLMs.
 
 Important rules:
 
-- Minimize token usage.
-- Avoid injecting unnecessary context into prompts.
-- Maintain deterministic outputs when possible.
-- Do not increase temperature or token limits without justification.
+- minimize token usage
+- avoid injecting unnecessary context into prompts
+- prefer structured outputs when possible
+- do not increase temperature or token limits without justification
+
+---
 
 ## Security
 
@@ -68,30 +84,58 @@ Always consider:
 
 Never log sensitive company data.
 
+---
+
 ## Workflow
 
 Before implementing any change:
 
 1. explain the problem
-2. propose the change
-3. show a diff
-4. wait for approval
+2. propose the solution
+3. identify the files that need modification
+4. show the proposed diff
+5. wait for approval before modifying code
 
-## Documentation hierarchy
+---
 
-When making changes to this repository, consult documents in the following order:
+## Documentation Hierarchy
 
-1. PRODUCT_REQUIREMENTS.md — defines product goals and workflow
-2. SYSTEM_ARCHITECTURE.md — defines system components and responsibilities
-3. AGENTS.md — defines specialized agent roles
-4. CLAUDE.md — defines coding rules and constraints
+When modifying the repository, consult documents in this order:
 
-## Large files
+1. **PRODUCT_REQUIREMENTS.md** — defines product purpose and workflows  
+2. **SYSTEM_ARCHITECTURE.md** — explains system design and components  
+3. **CODEBASE_OVERVIEW.md** — describes repository structure  
+4. **DEVELOPMENT_RULES.md** — engineering rules and coding discipline  
+5. **AGENTS.md** — specialized agent responsibilities  
+6. **CLAUDE.md** — behavior rules for Claude
 
-documents.py is very large. When working on this file,
-read only the relevant function instead of loading the entire file
-unless absolutely necessary.
+If conflicts arise, follow **product and architecture documents first**.
 
-If code behavior conflicts with these documents, follow the architecture and product documents.
+---
 
-Never directly modify files without explanation.
+## Agent Usage
+
+Before modifying code, determine which specialized agent should handle the task.
+
+Agents are defined in:
+
+`.claude/agents/`
+
+Select the agent whose responsibility matches the task area before making changes.
+
+---
+
+## Large Files
+
+`documents.py` is extremely large.
+
+When working with it:
+
+- read only the relevant function
+- avoid loading the entire file unless absolutely necessary
+
+---
+
+## Safety Rule
+
+Never modify files directly without first explaining the change and waiting for approval.
