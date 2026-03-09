@@ -1,0 +1,64 @@
+{
+  "1": {
+    "title": "Projektüberblick",
+    "1.1": {
+      "title": "Unternehmenshintergrund"
+    },
+    "1.2": {
+      "title": "Ausgangslage und Ziele"
+    }
+  },
+  "2": {
+    "title": "Arbeitspakete",
+    "2.1": {
+      "title": "AP1 – Analyse"
+    },
+    "2.2": {
+      "title": "AP2 – Implementierung"
+    },
+    "2.3": {
+      "title": "AP3 – Testing"
+    }
+  },
+  "3": {
+    "title": "Zeitplan",
+    "3.1": {
+      "title": "Meilensteine"
+    },
+    "3.2": {
+      "title": "Ressourcenplanung"
+    }
+  },
+  "4": {
+    "title": "Erwartete Ergebnisse",
+    "4.1": {
+      "title": "Technische Ergebnisse"
+    },
+    "4.2": {
+      "title": "Wirtschaftliche Ergebnisse"
+    }
+  },
+  "5": {
+    "title": "Risiken und Maßnahmen",
+    "5.1": {
+      "title": "Technische Risiken"
+    },
+    "5.2": {
+      "title": "Zeitliche Risiken"
+    },
+    "5.3": {
+      "title": "Maßnahmen zur Risikominimierung"
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+

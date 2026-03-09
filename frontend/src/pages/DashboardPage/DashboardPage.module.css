@@ -1,0 +1,32 @@
+.container {
+  width: 100%;
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+}
+
+.subtitle {
+  margin-top: 0.5rem;
+  font-size: 1rem;
+  color: var(--brand-text-medium);
+}
+
+.content {
+  background-color: #fff;
+  border-radius: 12px;
+  padding: 2rem;
+  border: 1px solid var(--brand-border);
+}
+
+.placeholder {
+  color: var(--brand-text-medium);
+  font-size: 0.95rem;
+}

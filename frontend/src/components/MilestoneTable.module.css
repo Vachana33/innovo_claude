@@ -1,0 +1,91 @@
+.milestoneTableContainer {
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.milestoneTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.milestoneTable th {
+  background-color: var(--brand-gold-light, #f5f0e8);
+  color: var(--brand-gold-dark, #8b6914);
+  padding: 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  border: 1px solid var(--brand-border, #ddd);
+}
+
+.milestoneTable td {
+  padding: 0.5rem;
+  border: 1px solid var(--brand-border, #ddd);
+}
+
+.milestoneTable tbody tr:hover {
+  background-color: var(--brand-gold-light, #f5f0e8);
+}
+
+.inputField {
+  width: 100%;
+  padding: 0.4rem;
+  border: 1px solid var(--brand-border, #ddd);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.inputField:focus {
+  outline: none;
+  border-color: var(--brand-gold, #d4af37);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.1);
+}
+
+.totalRow {
+  background-color: var(--brand-gold-light, #f5f0e8);
+  font-weight: 600;
+}
+
+.totalLabel {
+  text-align: right;
+  padding-right: 1rem;
+}
+
+.totalValue {
+  text-align: right;
+  font-weight: 600;
+  color: var(--brand-gold-dark, #8b6914);
+}
+
+.removeButton {
+  background: none;
+  border: none;
+  color: #dc3545;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.removeButton:hover {
+  background-color: rgba(220, 53, 69, 0.1);
+}
+
+.addButton {
+  padding: 0.5rem 1rem;
+  background-color: var(--brand-gold-dark, #8b6914);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+}
+
+.addButton:hover {
+  background-color: var(--brand-gold, #d4af37);
+}

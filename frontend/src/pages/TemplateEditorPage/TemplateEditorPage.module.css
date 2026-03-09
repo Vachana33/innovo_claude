@@ -1,0 +1,246 @@
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--brand-border, #e0e0e0);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+  color: var(--brand-primary, #2563eb);
+}
+
+.headerActions {
+  display: flex;
+  gap: 1rem;
+}
+
+.cancelBtn,
+.saveBtn {
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.cancelBtn {
+  background-color: #f3f4f6;
+  color: #374151;
+}
+
+.cancelBtn:hover {
+  background-color: #e5e7eb;
+}
+
+.saveBtn {
+  background-color: var(--brand-primary, #2563eb);
+  color: white;
+}
+
+.saveBtn:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+
+.saveBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.formGroup {
+  margin-bottom: 2rem;
+}
+
+.formGroup label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--brand-border, #d1d5db);
+  border-radius: 6px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--brand-primary, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.textarea {
+  resize: vertical;
+}
+
+.sectionsList {
+  margin-top: 1rem;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 3rem;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 2px dashed #d1d5db;
+}
+
+.emptyState p {
+  margin-bottom: 1rem;
+  color: #6b7280;
+}
+
+.addFirstBtn {
+  padding: 0.75rem 1.5rem;
+  background-color: var(--brand-primary, #2563eb);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.addFirstBtn:hover {
+  background-color: #1d4ed8;
+}
+
+.sectionBlock {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.sectionLevel1 {
+  background: white;
+  border: 2px solid var(--brand-primary, #2563eb);
+}
+
+.sectionLevel2 {
+  margin-left: 2rem;
+  background: #f3f4f6;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.sectionNumber {
+  min-width: 40px;
+  font-weight: 600;
+  color: var(--brand-primary, #2563eb);
+}
+
+.sectionTitle {
+  flex: 1;
+  font-weight: 500;
+}
+
+.sectionActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.iconBtn {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d1d5db;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: var(--brand-primary, #2563eb);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.renameInput {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid var(--brand-primary, #2563eb);
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.milestoneBadge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-top: 0.5rem;
+}
+
+.addBelowBtn {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #28a745;
+  background: white;
+  color: #28a745;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.addBelowBtn:hover {
+  background: #f0fdf4;
+}
+
+.addMenu {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.addMenuBtn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--brand-primary, #2563eb);
+  background: white;
+  color: var(--brand-primary, #2563eb);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.addMenuBtn:hover {
+  background: #eff6ff;
+}

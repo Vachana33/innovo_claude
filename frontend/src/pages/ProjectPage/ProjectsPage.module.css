@@ -1,0 +1,469 @@
+/* Overall layout */
+.container {
+    display: flex;
+    min-height: 100vh;
+    background-color: var(--brand-bg-light);
+  }
+  
+  /* Sidebar styling */
+  .sidebar {
+    width: 220px;
+    padding: 1.5rem 1rem;
+    background-color: #fff;
+    border-right: 1px solid var(--brand-border);
+  }
+  
+  .sidebarTitle {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.4rem;
+    color: var(--brand-gold-dark);
+  }
+
+  .logoutButton {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--brand-border);
+    background-color: #fff;
+    font-size: 0.9rem;
+    cursor: pointer;
+    color: var(--brand-text-dark);
+    transition: background-color 0.2s, border-color 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .logoutButton:hover {
+    background-color: var(--brand-gold-light);
+    border-color: var(--brand-gold);
+  }
+  
+  .sidebarItem {
+    width: 100%;
+    padding: 0.55rem 0.8rem;
+    border-radius: 10px;
+    margin-bottom: 0.6rem;
+    font-size: 0.95rem;
+    border: 1px solid transparent;
+    background-color: var(--brand-bg-light);
+    cursor: pointer;
+    text-align: left;
+    color: var(--brand-text-dark);
+    transition: background-color 0.2s, border-color 0.2s;
+  }
+  
+  .sidebarItem:hover {
+    background-color: var(--brand-gold-light);
+    border-color: var(--brand-gold);
+  }
+  
+  .activeSidebarItem {
+    background-color: var(--brand-gold-light);
+    border-color: var(--brand-gold);
+  }
+  
+  /* Main content area */
+  .content {
+    flex: 1;
+    padding: 2rem 3rem;
+  }
+  
+  /* Header section */
+  .header {
+    margin-bottom: 2rem;
+  }
+
+  .headerContent {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  
+  .title {
+    margin: 0;
+    font-size: 1.9rem;
+    color: var(--brand-gold-dark);
+  }
+  
+  .subtitle {
+    margin-top: 0.3rem;
+    font-size: 0.96rem;
+    color: var(--brand-text-medium);
+  }
+  
+  /* Vertical layout for sections */
+  .layout {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    align-items: flex-start;
+  }
+  
+  /* Program column */
+  .programColumn {
+    width: 100%;
+    max-width: 400px;
+  }
+  
+  .programHeader {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+  
+  .programTitle {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--brand-text-dark);
+  }
+  
+  .programList {
+    background-color: #fff;
+    border-radius: 18px;
+    border: 1px solid var(--brand-border);
+    padding: 0.8rem;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+  }
+  
+  .programItem {
+    padding: 0.65rem 0.8rem;
+    border-radius: 999px;
+    margin-bottom: 0.4rem;
+    font-size: 0.95rem;
+    border: 1px solid transparent;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background-color 0.2s, border-color 0.2s;
+  }
+  
+  .programItem:hover {
+    border-color: var(--brand-gold);
+    background-color: var(--brand-gold-light);
+  }
+  
+  .programItemActive {
+    background-color: var(--brand-gold-light);
+    border: 1px solid var(--brand-gold);
+  }
+  
+  .programName {
+    font-size: 0.95rem;
+  }
+  
+  .programWebsite {
+    font-size: 0.8rem;
+    color: var(--brand-text-medium);
+  }
+  
+  .newProgramButton,
+  .newCompanyButton {
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--brand-gold);
+    background-color: var(--brand-gold-light);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  
+  /* Company column */
+  .companyColumn {
+    width: 100%;
+    max-width: 400px;
+  }
+  
+  .companyHeader {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+  
+  .companyTitle {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--brand-text-dark);
+  }
+  
+  .companyList {
+    background-color: #fff;
+    border-radius: 18px;
+    border: 1px solid var(--brand-border);
+    padding: 0.8rem;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+  }
+  
+  .companyItem {
+    padding: 0.65rem 0.8rem;
+    border-radius: 999px;
+    margin-bottom: 0.4rem;
+    font-size: 0.95rem;
+    border: 1px solid transparent;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background-color 0.2s, border-color 0.2s;
+  }
+  
+  .companyItem:hover {
+    border-color: var(--brand-gold);
+    background-color: var(--brand-gold-light);
+  }
+  
+  .companyItemActive {
+    background-color: var(--brand-gold-light);
+    border: 1px solid var(--brand-gold);
+  }
+  
+  .companyName {
+    font-size: 0.95rem;
+  }
+  
+  .companyWebsite {
+    font-size: 0.8rem;
+    color: var(--brand-text-medium);
+  }
+  
+  .audioIcon {
+    font-size: 0.75rem;
+    color: var(--brand-text-medium);
+  }
+  
+  /* Document column */
+  .docColumn {
+    width: 100%;
+    max-width: 400px;
+  }
+  
+  .docsTitle {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    font-size: 1.1rem;
+  }
+  
+  .docsHint {
+    font-size: 0.85rem;
+    color: var(--brand-text-medium);
+    margin-bottom: 0.75rem;
+  }
+  
+  .docButton,
+  .docButtonAlt {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    border-radius: 999px;
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+    border: none;
+    color: #fff;
+  }
+  
+  .docButton {
+    background-color: var(--brand-gold-dark);
+  }
+  
+  .docButtonAlt {
+    background-color: var(--brand-gold);
+  }
+  
+  .disabled {
+    background-color: #d6d0c2 !important;
+    cursor: not-allowed !important;
+  }
+  
+  /* Placeholder text */
+  .placeholder {
+    font-size: 0.9rem;
+    color: var(--brand-text-medium);
+    margin-top: 1rem;
+  }
+  
+  /* Dialog overlay and boxes */
+  .dialogOverlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  
+  .dialogBox,
+  .dialogBoxLarge {
+    background-color: white;
+    border-radius: 16px;
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.2);
+    padding: 1.6rem 1.9rem;
+  }
+  
+  .dialogBox {
+    max-width: 420px;
+    width: 100%;
+  }
+  
+  .dialogBoxLarge {
+    max-width: 480px;
+    width: 100%;
+  }
+  
+  .dialogTitle {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: var(--brand-gold-dark);
+  }
+  
+  .formLabel {
+    display: block;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+  }
+  
+  .formInput {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--brand-border);
+    margin-bottom: 0.8rem;
+    font-size: 0.95rem;
+  }
+  
+  .formFile {
+    margin-bottom: 1rem;
+  }
+  
+  .dialogActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+  }
+  
+  .cancelButton {
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--brand-border);
+    background-color: #fff;
+    cursor: pointer;
+  }
+  
+  .createButton {
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    background-color: var(--brand-gold-dark);
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+  
+  .required {
+    color: #b32020;
+  }
+  
+  /* Menu button and dropdown */
+  .menuContainer {
+    position: relative;
+  }
+
+  .menuButton {
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--brand-border);
+    background-color: #fff;
+    font-size: 1.2rem;
+    cursor: pointer;
+    line-height: 1;
+    color: var(--brand-text-dark);
+  }
+
+  .menuButton:hover {
+    background-color: var(--brand-gold-light);
+    border-color: var(--brand-gold);
+  }
+
+  .menuDropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 0.3rem;
+    background-color: #fff;
+    border: 1px solid var(--brand-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 10;
+    min-width: 180px;
+    overflow: hidden;
+  }
+
+  .menuItem {
+    display: block;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    text-align: left;
+    border: none;
+    background-color: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--brand-text-dark);
+    transition: background-color 0.2s;
+  }
+
+  .menuItem:hover {
+    background-color: var(--brand-gold-light);
+  }
+
+  .menuItem:not(:last-child) {
+    border-bottom: 1px solid var(--brand-border);
+  }
+
+  /* Import dialog styles */
+  .importList {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+  }
+
+  .importItem {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.8rem;
+    border: 1px solid var(--brand-border);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+  }
+
+  .importItemDisabled {
+    opacity: 0.6;
+    background-color: var(--brand-bg-light);
+  }
+
+  .importButton {
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--brand-gold);
+    background-color: var(--brand-gold-light);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .importButton:hover:not(:disabled) {
+    background-color: var(--brand-gold);
+    color: #fff;
+  }
+
+  .alreadyLinked {
+    font-size: 0.8rem;
+    color: var(--brand-text-medium);
+    font-style: italic;
+  }
+  
+  /* Collaboration placeholder */
+  .collabPlaceholder {
+    font-size: 1rem;
+    color: var(--brand-text-medium);
+    margin-top: 1rem;
+  }
+  

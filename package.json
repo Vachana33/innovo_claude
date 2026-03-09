@@ -1,0 +1,25 @@
+{
+  "name": "demo_innovo",
+  "version": "1.0.0",
+  "description": "AI-powered funding document generation platform (Vorhabensbeschreibung). Internal use, Innovo Consulting.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vachana33/Demo_innovo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Vachana33/Demo_innovo/issues"
+  },
+  "homepage": "https://github.com/Vachana33/Demo_innovo#readme",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

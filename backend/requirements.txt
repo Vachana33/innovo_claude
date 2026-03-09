@@ -1,0 +1,26 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+sqlalchemy==2.0.36
+passlib[bcrypt]==1.7.4
+python-multipart>=0.0.22
+requests>=2.32.4
+beautifulsoup4==4.12.3
+openai==1.54.0
+python-dotenv==1.0.1
+# Updated pyjwt to allow resolution with python-jose[cryptography]>=3.4.0
+# python-jose[cryptography] requires pyjwt[crypto] which needs pyjwt>=2.10.1
+pyjwt>=2.9.0
+python-jose[cryptography]>=3.4.0
+reportlab==4.0.7
+python-docx==1.1.0
+alembic>=1.13.0
+psycopg2-binary==2.9.9
+# PyPDF2 has known vulnerabilities - consider migrating to pypdf (newer fork)
+# For now, pinning to latest version with known issues documented
+PyPDF2>=3.0.0,<4.0.0
+# Pin httpx to <0.28 to avoid compatibility issue with OpenAI SDK 1.54.0
+# OpenAI SDK 1.54.0 passes 'proxies' kwarg to httpx.Client, which was removed in httpx 0.28.0+
+httpx==0.27.2
+supabase>=2.27.2
+posthog>=3.0.0
+

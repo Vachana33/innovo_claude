@@ -1,0 +1,25 @@
+:root {
+  --brand-gold: #a28d54;
+  --brand-gold-dark: #7b6b3f;
+  --brand-gold-light: #f6f2e7;
+
+  --brand-text-dark: #1a1a1a;
+  --brand-text-medium: #333333;
+
+  --brand-border: #d6d0c2;
+  --brand-bg-light: #faf8f3;
+
+  --font-main: "Helvetica", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-main);
+  color: var(--brand-text-dark);
+  background-color: var(--brand-bg-light);
+}
