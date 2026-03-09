@@ -12,7 +12,7 @@ Agents should be invoked when a task falls within their responsibility area.
 
 ## Backend Agent
 
-Location: `.claude/agents/backend.md`
+Location: `.claude/agents/backend_agent.md`
 
 Responsible for:
 
@@ -33,7 +33,7 @@ Focus:
 
 ## Frontend Agent
 
-Location: `.claude/agents/frontend.md`
+Location: `.claude/agents/frontend_agent.md`
 
 Responsible for:
 
@@ -53,7 +53,7 @@ Focus:
 
 ## LLM Pipeline Agent
 
-Location: `.claude/agents/llm_pipeline.md`
+Location: `.claude/agents/llm_pipeline_agent.md`
 
 Responsible for:
 
@@ -72,7 +72,7 @@ Focus:
 
 ## Security Agent
 
-Location: `.claude/agents/security.md`
+Location: `.claude/agents/security_agent.md`
 
 Responsible for:
 
