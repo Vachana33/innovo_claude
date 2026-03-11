@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Dict, Any
 from openai import OpenAI
+from app.observability import log_openai_call
 
 logger = logging.getLogger(__name__)
 
@@ -135,22 +136,24 @@ IMPORTANT:
     try:
         logger.info("Starting company profile extraction")
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a data extraction system. Extract ONLY factual information from text. Do NOT generate, create, or invent any information. Return structured JSON only."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.0,  # Use 0.0 for deterministic extraction
-            response_format={"type": "json_object"},  # Force JSON output
-            timeout=60.0  # 1 minute timeout
-        )
+        with log_openai_call(logger, "extract_company_profile", __file__, "gpt-4o-mini") as openai_ctx:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a data extraction system. Extract ONLY factual information from text. Do NOT generate, create, or invent any information. Return structured JSON only."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.0,  # Use 0.0 for deterministic extraction
+                response_format={"type": "json_object"},  # Force JSON output
+                timeout=60.0  # 1 minute timeout
+            )
+            openai_ctx["response"] = response
 
         response_text = response.choices[0].message.content
         logger.info("OpenAI response received for company profile extraction")

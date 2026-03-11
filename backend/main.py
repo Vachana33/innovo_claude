@@ -1,5 +1,7 @@
 # Standard library imports
 import os
+import time
+import uuid
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -47,7 +49,8 @@ from fastapi.exceptions import RequestValidationError  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 from app.database import engine, Base  # noqa: E402
 from app.routers import auth, funding_programs, companies, documents, templates, alte_vorhabensbeschreibung  # noqa: E402
-from app.posthog_client import init_posthog, shutdown_posthog  # noqa: E402
+from app.posthog_client import init_posthog, shutdown_posthog, capture_event  # noqa: E402
+from app.observability import set_request_id, reset_request_id, get_request_id  # noqa: E402
 
 # Create database tables
 # Note: In production (PostgreSQL on Render), use Alembic migrations instead
@@ -104,6 +107,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request logging middleware
+# Runs inside CORS so CORS headers are already applied.
+# Logs method, path, status, duration, and a short unique request_id per request.
+# User identity is not extracted here (Phase 1: lightweight and failure-proof).
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = uuid.uuid4().hex[:12]
+    token = set_request_id(request_id)
+    request.state.request_id = request_id
+
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "request | request_id=%s method=%s path=%s status=%d duration_ms=%d",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+        response.headers["X-Request-ID"] = request_id
+        capture_event(
+            distinct_id="backend",
+            event="request_completed",
+            properties={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+        return response
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.error(
+            "request_error | request_id=%s method=%s path=%s duration_ms=%d error=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+            str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        reset_request_id(token)
+
+
 # Exception handlers to ensure CORS headers are always present
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -135,8 +189,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Ensure CORS headers are present on all exceptions"""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    """Log unhandled exceptions with request_id; never expose stack trace to client."""
+    request_id = getattr(request.state, "request_id", None) or get_request_id() or "none"
+    logger.error(
+        "unhandled_exception | request_id=%s path=%s error=%s",
+        request_id,
+        request.url.path,
+        str(exc),
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},

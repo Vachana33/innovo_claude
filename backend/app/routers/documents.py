@@ -7,6 +7,8 @@ from app.models import Document, Company, User, FundingProgram
 from app.schemas import DocumentResponse, DocumentUpdate, ChatRequest, ChatResponse, ChatConfirmationRequest, DocumentListItem
 from app.dependencies import get_current_user
 from app.template_resolver import get_template_for_document
+from app.observability import log_openai_call, get_request_id
+from app.posthog_client import capture_event
 from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime, timezone
 import os
@@ -280,6 +282,17 @@ def get_document(
             db.refresh(document)
             template_info = f"template_id={document.template_id}" if document.template_id else f"template_name={document.template_name or 'default'}"
             logger.info(f"[TEMPLATE RESOLVER] Created document {document.id} from {template_info} for company {company_id}")
+            capture_event(
+                distinct_id=current_user.email,
+                event="document_created",
+                properties={
+                    "document_id": document.id,
+                    "company_id": company_id,
+                    "funding_program_id": funding_program_id,
+                    "template_info": template_info,
+                    "request_id": get_request_id(),
+                },
+            )
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to create document from template: {str(e)}", exc_info=True)
@@ -782,6 +795,15 @@ def confirm_headings(
         db.commit()
         db.refresh(document)
         logger.info(f"Headings confirmed for document {document_id}")
+        capture_event(
+            distinct_id=current_user.email,
+            event="headings_confirmed",
+            properties={
+                "document_id": document_id,
+                "company_id": document.company_id,
+                "request_id": get_request_id(),
+            },
+        )
         return document
     except Exception as e:
         db.rollback()
@@ -1203,22 +1225,24 @@ Geben Sie KEIN Markdown-Format, KEINE Erklärungen und KEINEN Text außerhalb de
     logger.info("LLM batch generation prompt tokens: %s", approx_tokens)
     for attempt in range(max_retries + 1):
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Sie sind ein professioneller Berater, der sich auf Förderanträge spezialisiert hat. Sie schreiben klare, strukturierte und überzeugende Projektbeschreibungen auf Deutsch im formellen Fördermittel-Stil."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.7,
-                response_format={"type": "json_object"},
-                timeout=120.0  # 2 minute timeout for production safety
-            )
+            with log_openai_call(logger, "_generate_batch_content", __file__, "gpt-4o-mini") as openai_ctx:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "Sie sind ein professioneller Berater, der sich auf Förderanträge spezialisiert hat. Sie schreiben klare, strukturierte und überzeugende Projektbeschreibungen auf Deutsch im formellen Fördermittel-Stil."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.7,
+                    response_format={"type": "json_object"},
+                    timeout=120.0  # 2 minute timeout for production safety
+                )
+                openai_ctx["response"] = response
 
             response_text = response.choices[0].message.content
             logger.info(f"OpenAI response received for batch (attempt {attempt + 1})")
@@ -1230,7 +1254,9 @@ Geben Sie KEIN Markdown-Format, KEINE Erklärungen und KEINEN Text außerhalb de
                 # Validate that all expected section IDs are present
                 missing_ids = [sid for sid in section_ids if sid not in generated_content]
                 if missing_ids:
-                    raise ValueError(f"Missing section IDs in response: {missing_ids}")
+                    logger.warning(f"Missing section IDs in LLM response: {missing_ids}. Inserting empty placeholders.")
+                    for sid in missing_ids:
+                        generated_content[sid] = ""
 
                 # Validate that all values are strings
                 for sid, content in generated_content.items():
@@ -1395,6 +1421,18 @@ def generate_content(
     logger.info(f"Split {len(text_sections)} text sections into {len(batches)} batches for document {document_id}")
     if milestone_sections:
         logger.info(f"Excluded {len(milestone_sections)} milestone table(s) from content generation")
+    capture_event(
+        distinct_id=current_user.email,
+        event="content_generation_started",
+        properties={
+            "document_id": document_id,
+            "company_id": document.company_id,
+            "funding_program_id": document.funding_program_id,
+            "total_sections": len(text_sections),
+            "total_batches": len(batches),
+            "request_id": get_request_id(),
+        },
+    )
 
     # Initialize section content map (preserve existing content for all sections)
     section_content_map = {}
@@ -1476,6 +1514,20 @@ def generate_content(
 
     # Final status check
     if successful_batches == 0:
+        capture_event(
+            distinct_id=current_user.email,
+            event="content_generation_failed",
+            properties={
+                "document_id": document_id,
+                "company_id": document.company_id,
+                "funding_program_id": document.funding_program_id,
+                "total_batches": len(batches),
+                "failed_batches": len(failed_batches),
+                "successful_batches": 0,
+                "errors": [b["error"] for b in failed_batches],
+                "request_id": get_request_id(),
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate content for all batches. Errors: {[b['error'] for b in failed_batches]}"
@@ -1488,6 +1540,19 @@ def generate_content(
     # Final refresh to ensure we return the latest state
     db.refresh(document)
     logger.info(f"Successfully completed content generation for document {document_id}: {successful_batches}/{len(batches)} batches succeeded")
+    capture_event(
+        distinct_id=current_user.email,
+        event="content_generation_completed",
+        properties={
+            "document_id": document_id,
+            "company_id": document.company_id,
+            "funding_program_id": document.funding_program_id,
+            "total_batches": len(batches),
+            "successful_batches": successful_batches,
+            "failed_batches": len(failed_batches),
+            "request_id": get_request_id(),
+        },
+    )
 
     return document
 
@@ -2207,23 +2272,25 @@ WICHTIG:
     logger.info("LLM section edit prompt size (chars): %s", len(prompt))
     logger.info("LLM section edit prompt tokens: %s", approx_tokens)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Sie sind ein professioneller Redakteur, der bestehende Abschnitte von Vorhabensbeschreibungen gezielt überarbeitet. Sie sind KEIN Autor, der Inhalte neu erstellt. Ihre Aufgabe ist die präzise Bearbeitung vorhandener Texte auf Deutsch im formellen Fördermittel-Stil."
-                },
-                {
-                    "role": "user",
-                    
-                    "content": prompt
-                }
-            ],
-            temperature=0.7,
-            max_tokens=2000,
-            timeout=120.0  # 2 minute timeout for production safety
-        )
+        with log_openai_call(logger, "_generate_section_content", __file__, "gpt-4o-mini") as openai_ctx:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sie sind ein professioneller Redakteur, der bestehende Abschnitte von Vorhabensbeschreibungen gezielt überarbeitet. Sie sind KEIN Autor, der Inhalte neu erstellt. Ihre Aufgabe ist die präzise Bearbeitung vorhandener Texte auf Deutsch im formellen Fördermittel-Stil."
+                    },
+                    {
+                        "role": "user",
+
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=2000,
+                timeout=120.0  # 2 minute timeout for production safety
+            )
+            openai_ctx["response"] = response
 
         generated_content = response.choices[0].message.content.strip()
 
@@ -2441,22 +2508,24 @@ Geben Sie NUR die Antwort zurück, ohne zusätzliche Erklärungen oder Formatier
     logger.info("LLM Q&A prompt size (chars): %s", len(prompt))
     logger.info("LLM Q&A prompt tokens: %s", approx_tokens)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Sie sind ein professioneller Berater für Förderanträge. Sie beantworten Fragen präzise und sachlich im formellen Fördermittel-Stil."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.7,
-            max_tokens=1000,  # Limit response length for concise answers
-            timeout=120.0  # 2 minute timeout for production safety
-        )
+        with log_openai_call(logger, "_answer_question_with_context", __file__, "gpt-4o-mini") as openai_ctx:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sie sind ein professioneller Berater für Förderanträge. Sie beantworten Fragen präzise und sachlich im formellen Fördermittel-Stil."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=1000,  # Limit response length for concise answers
+                timeout=120.0  # 2 minute timeout for production safety
+            )
+            openai_ctx["response"] = response
 
         answer = response.choices[0].message.content.strip()
         logger.info(f"Generated answer for question: '{user_query[:50]}...' (answer length: {len(answer)})")

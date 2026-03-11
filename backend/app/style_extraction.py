@@ -8,6 +8,7 @@ import hashlib
 import os
 from typing import List, Dict, Any
 from openai import OpenAI
+from app.observability import log_openai_call
 import json
 
 logger = logging.getLogger(__name__)
@@ -95,18 +96,20 @@ Output ONLY the JSON object. Do not include any other text or explanations.
     logger.info("LLM style extraction prompt size (chars): %s", len(prompt))
     logger.info("LLM style extraction tokens: %s", approx_tokens)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": "You are an expert in analyzing writing styles and document structure. You extract writing patterns into JSON, ignoring factual content."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,  # Keep it deterministic for extraction
-            max_tokens=2000,
-            timeout=180.0
-        )
-        
+        with log_openai_call(logger, "generate_style_profile", __file__, "gpt-4o-mini") as openai_ctx:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": "You are an expert in analyzing writing styles and document structure. You extract writing patterns into JSON, ignoring factual content."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,  # Keep it deterministic for extraction
+                max_tokens=2000,
+                timeout=180.0
+            )
+            openai_ctx["response"] = response
+
         style_json_str = response.choices[0].message.content
         style_profile = json.loads(style_json_str)
         

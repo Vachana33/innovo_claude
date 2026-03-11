@@ -13,6 +13,7 @@ import logging
 import os
 from sqlalchemy.orm import Session
 from openai import OpenAI
+from app.observability import log_openai_call
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -194,12 +195,14 @@ def transcribe_audio(audio_path: str, file_content_hash: Optional[str] = None, d
         client = OpenAI(api_key=api_key)
 
         with open(audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                language="de",
-                timeout=300.0  # 5 minute timeout for audio transcription (can be longer)
-            )
+            with log_openai_call(logger, "transcribe_audio", __file__, "whisper-1") as openai_ctx:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="de",
+                    timeout=300.0  # 5 minute timeout for audio transcription (can be longer)
+                )
+                openai_ctx["response"] = transcript  # Whisper has no .usage; tokens log as None
 
         transcript_text = transcript.text
         logger.info(f"[PROCESSING] Audio transcription completed: audio_path={audio_path}, transcript_length={len(transcript_text)}")

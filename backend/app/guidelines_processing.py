@@ -9,6 +9,7 @@ import re
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from openai import OpenAI
+from app.observability import log_openai_call
 from app.models import FundingProgramDocument, FundingProgramGuidelinesSummary, File as FileModel
 from app.processing_cache import get_cached_document_text
 
@@ -110,23 +111,25 @@ JSON:"""
     logger.info("LLM guideline extraction prompt size (chars): %s", len(prompt))
     logger.info("LLM guideline extraction tokens: %s", approx_tokens)
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Sie sind ein Experte für die Analyse von Förderrichtlinien. Sie extrahieren strukturierte Regeln aus Dokumenten."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,
-            max_tokens=4000,
-            timeout=120.0
-        )
-        
+        with log_openai_call(logger, "extract_rules_from_text", __file__, "gpt-4o-mini") as openai_ctx:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sie sind ein Experte für die Analyse von Förderrichtlinien. Sie extrahieren strukturierte Regeln aus Dokumenten."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=4000,
+                timeout=120.0
+            )
+            openai_ctx["response"] = response
+
         result_text = response.choices[0].message.content.strip()
         
         # Try to extract JSON from response (might have markdown code blocks)
