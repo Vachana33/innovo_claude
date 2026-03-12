@@ -1,7 +1,8 @@
 # System Architecture — Innovo Claude
 
 > **Audience:** AI agents and engineers making structural changes to this codebase.
-> **Scope:** Technical implementation detail. For product purpose and workflows, see `PRODUCT_REQUIREMENTS.md`.
+> **Scope:** Technical implementation detail. For product purpose, see `PRODUCT_REQUIREMENTS.md`. For product philosophy, see `docs/PRODUCT_VISION.md`.
+> **Version:** v2 — Project-centered architecture. Prior entity-centric design is described in git history.
 > **Status:** Verified against source code 2026-03.
 
 ---
@@ -19,315 +20,285 @@ Single Uvicorn Process
 └── SQLAlchemy session pool (sync, threadlocal)
 ```
 
-**Critical implication:** `BackgroundTasks` runs the background function in the same process as the web server. A long-running background task (audio transcription can take minutes) blocks a thread from the Uvicorn thread pool. This is acceptable at current scale but is a bottleneck under concurrent load. See §6 for details.
+**Thread ceiling constraint:** `BackgroundTasks` runs sync functions in Uvicorn's thread pool. Two long-running background tasks already exist: company processing (Whisper, up to minutes) and project context assembly (crawl + extraction chain). Do not add further long-running synchronous background tasks without acknowledging this constraint.
 
 ---
 
-## 2. Backend Architecture
+## 2. System Overview — v2 Architecture
 
-### 2.1 Entry Point — `backend/main.py`
+### 2.1 The Central Concept
+
+`Project` is the first-class entity that coordinates all other entities. A project binds a `Company`, a `FundingProgram`, and a body of work (`Documents`) under a single user-defined topic.
+
+In v1, users assembled this binding manually by navigating between entity management screens. In v2, the system assembles it automatically from a single creation form.
+
+```
+User
+ └─ Project
+       ├─ company_id          FK → companies (shared, reusable)
+       ├─ funding_program_id  FK → funding_programs (shared, reusable)
+       ├─ topic               Free text: "Robot automation for weld seam tracking"
+       ├─ status              initializing | context_loading | ready | generating | complete
+       ├─ template_resolved   Stored at creation; never re-resolved
+       ├─ ProjectContext       Assembled once; reused for all generation calls
+       └─ documents           Documents scoped to this project
+```
+
+**Companies and FundingPrograms remain shared entities.** One company can belong to many projects. The Project layer is additive — no existing entity is removed or restructured.
+
+### 2.2 What Changed from v1
+
+| Aspect | v1 | v2 |
+|--------|----|----|
+| Entry point | Companies screen | Dashboard (project list) |
+| Context assembly | Inline at generation time in `documents.py` | Pre-assembled into `ProjectContext` by `context_assembler.py` |
+| Prompt construction | Scattered across `documents.py` | `services/prompt_builder.py` |
+| Knowledge reuse | Style profile only (global, single type) | Knowledge base (multi-category, semantic retrieval) |
+| Company research | Manual: user provides website or audio | Automatic: research agent fills gaps |
+| Template selection | Manual: user selects at document creation | Automatic: inferred from FundingProgram at project creation |
+
+**What did not change:** All existing API endpoints, response shapes, database columns, prompt wording, prompt block order, XML delimiter injection, and LLM call site locations.
+
+---
+
+## 3. Backend Architecture
+
+### 3.1 Entry Point — `backend/main.py`
 
 Startup sequence (order matters):
 
 ```
-1. Load .env (only if file exists — dev guard)
-2. Validate JWT_SECRET_KEY (RuntimeError if absent — hard fail)
-3. Warn if OPENAI_API_KEY absent (soft fail — features degrade)
-4. Parse DATABASE_URL, detect SQLite vs PostgreSQL
-5. If SQLite: run Base.metadata.create_all() (dev convenience)
-6. If PostgreSQL: skip create_all() (Alembic migrations own the schema)
-7. Instantiate FastAPI app with lifespan context manager
-8. Register CORSMiddleware
-9. Register three exception handlers (HTTP, Validation, general Exception)
-   — all manually set CORS headers to survive middleware ordering issues
-10. Include all six routers
-11. Mount /assets static files (if backend/static/ exists)
+1.  Load .env (only if file exists — dev guard)
+2.  Validate JWT_SECRET_KEY (RuntimeError if absent)
+3.  Warn if OPENAI_API_KEY absent (soft fail)
+4.  Parse DATABASE_URL, detect SQLite vs PostgreSQL
+5.  If SQLite: run Base.metadata.create_all() (dev convenience)
+6.  If PostgreSQL: skip create_all() (Alembic owns the schema)
+7.  Instantiate FastAPI app with lifespan context manager
+8.  Register CORSMiddleware
+9.  Register exception handlers (HTTP, Validation, general)
+10. Include all routers
+11. Mount /assets static files
 12. Register /health endpoint
 13. Register SPA catch-all route (must be last)
 ```
 
-**CORS origin selection:**
-- `FRONTEND_ORIGIN` set → production mode: single origin
-- `FRONTEND_ORIGIN` unset → development mode: `localhost:3000`, `localhost:5173`, `localhost:5174`, `127.0.0.1:5173`, `127.0.0.1:5174`
-- `allow_methods=["*"]`, `allow_headers=["*"]` (permissive; appropriate for a private internal tool)
+**SPA catch-all skip list:** The catch-all `GET /{full_path:path}` skips paths starting with known API prefixes to avoid intercepting API routes. Current list: `auth/`, `funding-programs`, `companies`, `documents`, `templates`, `health`, `assets/`, `projects`, `knowledge-base`.
 
-**SPA routing:**
-The catch-all route `GET /{full_path:path}` serves `backend/static/index.html` for any non-API path. It explicitly skips paths starting with `auth/`, `funding-programs`, `companies`, `documents`, `templates`, `health`, `assets/` to avoid intercepting API routes. **If a new router prefix is added, it must be added to this skip list.**
+**Critical rule:** Every new router prefix must be added to this skip list. Omitting it causes the SPA to silently serve `index.html` for API calls in production.
 
-### 2.2 Router Layout
+### 3.2 Router Layout
 
-All routers are registered on the root FastAPI app (no `/api` prefix). Route prefixes are implicit in each router's decorators.
+All routers are registered on the root FastAPI app (no `/api` prefix).
 
-| Router file | URL prefix examples | Key verbs |
-|-------------|--------------------|-----------|
-| `routers/auth.py` | `/auth/register`, `/auth/login`, `/auth/password-reset-request`, `/auth/password-reset` | POST |
-| `routers/companies.py` | `/companies`, `/companies/{id}`, `/upload-audio`, `/companies/{id}/documents` | GET POST PUT DELETE |
-| `routers/funding_programs.py` | `/funding-programs`, `/funding-programs/{id}`, `/funding-programs/{id}/guidelines` | GET POST PUT DELETE |
-| `routers/documents.py` | `/documents/{company_id}/{type}`, `/documents/{id}/confirm-headings`, `/documents/{id}/generate-content`, `/documents/{id}/chat`, `/documents/{id}/chat/confirm`, `/documents/{id}/export` | GET POST PUT DELETE |
-| `routers/templates.py` | `/templates`, `/templates/{id}`, `/system-templates` | GET POST PUT DELETE |
-| `routers/alte_vorhabensbeschreibung.py` | `/alte-vorhabensbeschreibung`, `/alte-vorhabensbeschreibung/{id}`, `/alte-vorhabensbeschreibung/style-profile/generate` | GET POST PUT DELETE |
+| Router file | Prefix examples | Status |
+|-------------|----------------|--------|
+| `routers/auth.py` | `/auth/*` | Unchanged |
+| `routers/companies.py` | `/companies`, `/companies/{id}` | Unchanged |
+| `routers/funding_programs.py` | `/funding-programs`, `/funding-programs/{id}` | Unchanged |
+| `routers/documents.py` | `/documents/{company_id}/{type}`, `/documents/{id}/generate-content`, `/documents/{id}/chat`, `/documents/{id}/export` | Updated: generation reads from ProjectContext via PromptBuilder |
+| `routers/templates.py` | `/templates`, `/system-templates` | Unchanged |
+| `routers/alte_vorhabensbeschreibung.py` | `/alte-vorhabensbeschreibung` | Unchanged (retained for backward compat) |
+| `routers/projects.py` | `/projects`, `/projects/{id}` | **NEW** |
+| `routers/knowledge_base.py` | `/knowledge-base` | **NEW** (admin-only) |
 
-**Special endpoint:**
-- `GET /health` — returns `{"status": "ok"}`. Used by Render for health checks. Registered before the SPA catch-all.
+### 3.3 Service Layer — `backend/app/services/`
 
-### 2.3 Authentication
+This directory is new in v2. Services contain business logic that was previously inline in routers or in `documents.py`.
 
-**Every protected endpoint uses the `get_current_user` dependency** (`backend/app/dependencies.py`).
+**Architectural rule:** Routers call services. Services call existing modules (`extraction.py`, `preprocessing.py`, etc.). Services never call routers. Business logic does not live in routers.
 
-```python
-# Applied via:
-current_user: User = Depends(get_current_user)
-```
+| Service file | Responsibility |
+|-------------|---------------|
+| `context_assembler.py` | Background task: assembles `ProjectContext` from all available sources |
+| `prompt_builder.py` | Constructs LLM prompts from `ProjectContext`; manages context budget |
+| `research_agent.py` | Background task: web search enrichment when company data is absent |
+| `knowledge_base_retriever.py` | Semantic similarity retrieval from `knowledge_base_chunks` (pgvector) |
 
-Flow:
-```
-Request arrives with:  Authorization: Bearer <jwt>
-                              │
-                              ▼
-              dependencies.py: get_current_user()
-                              │
-                    jwt_utils.py: verify_token()
-                              │
-                    ┌─────────┴──────────┐
-                  Valid                Invalid / Expired
-                    │                        │
-              DB lookup by email        HTTP 401
-                    │
-              return User object
-```
+### 3.4 Existing Modules — `backend/app/`
 
-**JWT parameters** (`backend/app/jwt_utils.py`):
-- Algorithm: `HS256`
-- Access token expiry: 24 hours
-- Password reset token expiry: 1 hour
-- Reset tokens include `type: "password_reset"` claim to distinguish them
-- Reset tokens stored in DB as SHA-256 hash (one-way), invalidated after use
+These modules are unchanged and called by services and routers.
 
-**Password hashing:** `passlib[bcrypt]` with automatic salt. Comparison is constant-time.
+| Module | Responsibility | Called by |
+|--------|---------------|-----------|
+| `extraction.py` | LLM extraction of company profile from text | `context_assembler.py`, `companies.py` |
+| `preprocessing.py` | Website crawl, audio transcription (Whisper) | `context_assembler.py`, `companies.py` |
+| `guidelines_processing.py` | Structured rule extraction from guideline PDFs | `context_assembler.py`, `funding_programs.py` |
+| `style_extraction.py` | Writing style extraction from historical docs | `context_assembler.py`, `alte_vorhabensbeschreibung.py` |
+| `file_storage.py` | Supabase upload, SHA-256 deduplication | All file-handling routers |
+| `document_extraction.py` | Text extraction from PDFs/DOCX | `context_assembler.py`, `funding_programs.py` |
+| `text_cleaning.py` | Boilerplate removal, filler word cleanup | `context_assembler.py`, `companies.py` |
+| `processing_cache.py` | Hash-based cache read/write (no TTL) | All processing modules |
+| `template_resolver.py` | Resolve template for a document | `projects.py` (at creation), `documents.py` |
+| `observability.py` | Request tracking, structured logging | `main.py` middleware |
+| `posthog_client.py` | Analytics event capture | `auth.py`, `main.py` |
+| `jwt_utils.py` | Token generation and verification | `auth.py`, `dependencies.py` |
+| `dependencies.py` | `get_current_user` FastAPI dependency | All protected routers |
 
-### 2.4 Database Layer
+### 3.5 Authentication
 
-**Connection configuration** (`backend/app/database.py`):
-
-| Environment | URL pattern | Engine config |
-|-------------|-------------|---------------|
-| Development | `sqlite:///./innovo.db` | `check_same_thread=False` |
-| Production | `postgresql://...` or `postgres://...` | pool_size=5, max_overflow=10, pool_pre_ping=True, sslmode=require |
-
-`pool_pre_ping=True` executes a lightweight `SELECT 1` before each connection use, preventing stale-connection errors after database restarts.
-
-**Session lifecycle:**
-```python
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db          # injected into route handler
-    finally:
-        db.close()        # always closed, even on exception
-```
-
-`autocommit=False`, `autoflush=False` — all writes require explicit `db.commit()`.
-
-**Schema management:**
-- Development (SQLite): `Base.metadata.create_all()` runs at startup
-- Production (PostgreSQL): Alembic only. `create_all()` is explicitly suppressed.
-- Migration files: `backend/alembic/versions/` (18 files)
-- Run migrations: `alembic upgrade head` (must be done manually or in deployment pipeline)
-
-### 2.5 Dependency Injection Chain
+Unchanged from v1. Every protected endpoint uses the `get_current_user` dependency.
 
 ```
-Route handler
-    ├── db: Session = Depends(get_db)           # database session
-    └── current_user: User = Depends(get_current_user)
-                                │
-                                └── credentials = Depends(HTTPBearer())
-                                └── db: Session = Depends(get_db)
+Request: Authorization: Bearer <jwt>
+    │
+    ▼
+dependencies.py: get_current_user()
+    │
+    jwt_utils.py: verify_token()
+    │
+    ├── Valid   → DB lookup by email → return User
+    └── Invalid → HTTP 401
 ```
 
-Note: `get_db` is called independently for `get_current_user` and for the route handler — each call gets the same session within a single request because FastAPI caches dependency results within a request scope.
+JWT parameters: HS256, 24-hour access token, 1-hour password reset token.
+
+### 3.6 Database Layer
+
+Unchanged from v1. Development uses SQLite; production uses PostgreSQL with pool_size=5, max_overflow=10, pool_pre_ping=True.
+
+Schema management: Alembic only in production. `Base.metadata.create_all()` is suppressed for PostgreSQL.
 
 ---
 
-## 3. Frontend Architecture
+## 4. Project Lifecycle
 
-### 3.1 Module Structure
-
-```
-frontend/src/
-├── main.tsx                  # App entry: StrictMode + BrowserRouter + AuthProvider
-├── App.tsx                   # Route definitions + ProtectedRoute guards
-├── contexts/
-│   └── AuthContext.tsx        # Global auth state (isAuthenticated, login, logout)
-├── utils/
-│   ├── api.ts                 # ALL HTTP calls go through here
-│   ├── authUtils.ts           # JWT payload decode (no verification), token helpers
-│   └── debugLog.ts            # Conditional dev logging
-├── components/
-│   ├── Layout.tsx             # Nav wrapper for authenticated pages
-│   ├── ProtectedRoute.tsx     # Auth guard — redirects to /login if not authenticated
-│   └── MilestoneTable.tsx     # Milestone section component
-├── pages/                     # One folder per route
-│   ├── LoginPage/
-│   ├── DashboardPage/
-│   ├── CompaniesPage/
-│   ├── FundingProgramsPage/
-│   ├── DocumentsPage/
-│   ├── EditorPage/            # Core editor — largest page component
-│   ├── TemplatesPage/
-│   ├── TemplateEditorPage/
-│   ├── ProjectPage/
-│   └── AlteVorhabensbeschreibungPage/
-└── assets/                    # Static images
-```
-
-### 3.2 Auth State
-
-`AuthContext` stores: `token`, `userEmail`, `isAuthenticated`.
-
-Token lifecycle:
-```
-login(token, email?)
-  └── stores token in localStorage["innovo_auth_token"]
-  └── stores email in localStorage["innovo_user_email"]
-  └── sets isAuthenticated = true
-
-logout()
-  └── clears both localStorage keys
-  └── sets isAuthenticated = false
-
-On page load:
-  AuthContext initialises from localStorage
-  (no token validation — backend validates on first API call)
-```
-
-`authUtils.ts:decodeJWT()` splits the JWT on `.`, base64-decodes the payload, and extracts the `email` or `sub` claim. **No signature verification occurs on the frontend** — this is intentional. Verification is the backend's responsibility.
-
-### 3.3 API Utility — `src/utils/api.ts`
-
-All HTTP calls route through `apiRequest<T>()`. It:
-1. Reads `VITE_API_URL` from env (defaults to `http://localhost:8000`)
-2. Injects `Authorization: Bearer <token>` if a token exists
-3. Sets `Content-Type: application/json` for non-FormData requests
-4. On 401: clears tokens and returns `{ error: "AUTH_EXPIRED" }` — **does not redirect**
-5. On 204: returns `null`
-6. On other errors: extracts `detail` or `message` from JSON response body
-
-File upload functions (`apiUploadFile`, `apiUploadFiles`, `apiUploadFilePut`) use `FormData` and deliberately **omit `Content-Type`** so the browser sets the correct multipart boundary automatically.
-
-**Rule:** Do not make `fetch()` calls outside `api.ts`. Do not hardcode `http://localhost:8000`.
-
-### 3.4 Editor Page State Machine
-
-`EditorPage` manages three mutually exclusive modes:
+### 4.1 Creation
 
 ```
-reviewHeadings
-    │  POST /documents/{id}/confirm-headings
-    ▼
-confirmedHeadings
-    │  POST /documents/{id}/generate-content
-    ▼
-editingContent
+POST /projects
+    │
+    ├── Validate: company_id, funding_program_id, topic (required)
+    ├── Resolve template from FundingProgram → store as project.template_resolved
+    ├── Create Project row (status: "initializing")
+    ├── Create Document row (empty sections from resolved template)
+    ├── Return project to client immediately
+    └── BackgroundTask → assemble_project_context()
 ```
 
-Mode is derived on load from:
-- `document.headings_confirmed === 0` → `reviewHeadings`
-- `document.headings_confirmed === 1` AND sections have empty content → `confirmedHeadings`
-- `document.headings_confirmed === 1` AND sections have content → `editingContent`
+### 4.2 Context Assembly Pipeline
 
-**Auto-save:** 1-second debounce on section content changes. Calls `PUT /documents/{id}`. Skipped on initial load and during chat updates (controlled by `isUpdatingFromChat` flag).
+`context_assembler.py` runs as a background task in five sequential stages:
 
-**Undo/redo:** Client-side history stacks (`historyPast[]`, `historyFuture[]`). State is snapshotted every 500ms. Duplicate consecutive states are suppressed.
+```
+Stage 1 — Retrieve stored assets         (no LLM, fast)
+    ├── Load company.company_profile_json (if exists)
+    ├── Load funding_program_guidelines_summary.rules_json (if exists)
+    └── Load alte_vorhabensbeschreibung_style_profile.style_summary_json (most recent)
 
-**Status polling:** When `company.processing_status` is not `"done"` or `"failed"`, the editor polls `GET /companies/{id}` every 2000ms. Polling is stopped when a terminal status is reached or the component unmounts.
+Stage 2 — Enrich company context         (async, may call LLM)
+    ├── If company has website: crawl → clean → cache (website_text_cache)
+    ├── If company has audio: Whisper → clean → cache (audio_transcript_cache)
+    ├── If company has uploaded docs: extract → clean → cache (document_text_cache)
+    └── If any text available and no profile yet: extract_company_profile() → LLM
+
+Stage 3 — Knowledge base retrieval       (pgvector query)
+    └── knowledge_base_retriever.py: embed (topic + company name) → top-k chunks
+        → retrieved_examples_json
+
+Stage 4 — Domain research                (optional, web search)
+    └── research_agent.py: triggered only if company has no profile and no website
+        → domain_research_json
+
+Stage 5 — Consolidate                    (assemble snapshot)
+    ├── Merge all sources into ProjectContext
+    ├── Compute context_hash
+    └── Set project.status = "ready"
+```
+
+**Partial context is usable.** Generation can proceed with any combination of available context fields. Missing fields produce less accurate output; they do not cause errors.
+
+### 4.3 Project Status Values
+
+| Status | Set when |
+|--------|---------|
+| `initializing` | Project row created, context assembly not yet started |
+| `context_loading` | Context assembly background task is running |
+| `ready` | ProjectContext assembled; document generation is available |
+| `generating` | Content generation in progress |
+| `complete` | Document exported |
+
+### 4.4 Context Invalidation
+
+When the user uploads new company documents or new guideline files:
+1. The relevant cache tables are updated (hash-based, as before)
+2. `project.status` reverts to `context_loading`
+3. `assemble_project_context()` is re-triggered
+4. On completion, `ProjectContext` is updated and `project.status` returns to `ready`
 
 ---
 
-## 4. Document Generation Pipeline
+## 5. Document Generation Pipeline
 
-### 4.1 Pipeline Inputs
+### 5.1 Context Input (v2)
 
-Before any generation call, three independently-sourced context objects are assembled:
+Generation reads from `ProjectContext` via `PromptBuilder`. If no `ProjectContext` exists (documents created before v2, or documents not associated with a project), generation falls back to direct assembly from `Company` and `FundingProgram` rows — identical to v1 behaviour.
 
-| Input | Source table | Cache key | LLM call that produced it |
-|-------|-------------|-----------|--------------------------|
-| `company_profile` | `companies.company_profile` (JSON) | N/A — stored on company row | `extract_company_profile()` in `extraction.py` |
-| `website_clean_text` | `companies.website_clean_text` | `website_text_cache.url_hash` | None (scraped, not LLM) |
-| `transcript_clean` | `companies.transcript_clean` | `audio_transcript_cache.file_content_hash` | Whisper API (`transcribe_audio()` in `preprocessing.py`) |
-| `funding_program_rules` | `funding_program_guidelines_summary.rules_json` (JSON) | `source_file_hash` (combined hash) | `extract_rules_from_text()` in `guidelines_processing.py` |
-| `style_profile` | `alte_vorhabensbeschreibung_style_profile.style_summary_json` (JSON) | `combined_hash` | `generate_style_profile()` in `style_extraction.py` |
+| Context field | Source | Used in |
+|---------------|--------|---------|
+| `company_profile_json` | `companies.company_profile` | All generation calls |
+| `funding_rules_json` | `funding_program_guidelines_summary.rules_json` | Batch generation |
+| `domain_research_json` | `research_agent.py` output | Batch generation (new block) |
+| `retrieved_examples_json` | `knowledge_base_retriever.py` output | Batch generation (new block) |
+| `style_profile_json` | `alte_vorhabensbeschreibung_style_profile.style_summary_json` | Batch generation |
+| `website_text_preview` | Truncated `company.website_clean_text` | Batch generation, chat |
 
-**All inputs are optional.** Generation proceeds with whatever context is available. Missing inputs produce less accurate output; they do not cause errors.
+### 5.2 PromptBuilder — `services/prompt_builder.py`
 
-### 4.2 Batch Generation — `_generate_batch_content()`
+`PromptBuilder` is the single point of prompt assembly. It accepts a `ProjectContext` object (or `None` for backward compatibility) and returns assembled prompt strings. It has no I/O and makes no database calls.
 
-Located in `documents.py:1031`.
+**Context budget (approximate, gpt-4o-mini):**
 
+| Block | Tokens |
+|-------|--------|
+| System prompt | ~500 |
+| Funding rules | ~2,000 |
+| Company profile | ~1,000 |
+| Website / transcript text | ~6,000 |
+| Project topic + domain research | ~2,000 |
+| Retrieved examples (max 3) | ~4,000 |
+| Style guide | ~1,000 |
+| Generation task | ~1,000 |
+| **Total** | **~17,500** (well within 128k limit) |
+
+### 5.3 Prompt Block Order (load-bearing — do not change without testing)
+
+```
+=== 1. FÖRDERRICHTLINIEN ===         ← funding_rules_json  (primary constraint)
+=== 2. FIRMENINFORMATIONEN ===        ← company_profile + website/transcript text
+=== 3. PROJEKTTHEMA UND DOMÄNE ===   ← topic + domain_research_json  (NEW in v2)
+=== 4. REFERENZBEISPIELE ===          ← retrieved_examples_json  (NEW in v2)
+=== 5. STIL-LEITFADEN ===             ← style_profile_json
+=== 6. GENERIERUNGSAUFGABE ===        ← section list to generate
+```
+
+Rules are injected first so the model treats them as the primary constraint. This order is load-bearing. Changing it changes generation behaviour.
+
+### 5.4 Batch Generation
+
+Located in `documents.py:_generate_batch_content()`. Sections are split into batches of 3–5. Each batch is one LLM call. `milestone_table` sections are always skipped. Output: strict JSON `{ section_id: "text", ... }`. Retries up to 2× on structural failure.
+
+Generation call now:
 ```
 POST /documents/{id}/generate-content
     │
-    ├── Load document, company, funding program, style profile
-    ├── Filter out milestone_table sections (never generated by LLM)
-    ├── Split remaining sections into batches of 3–5
-    │
-    └── For each batch:
-        ├── [Token logging] len(prompt) // 4
-        ├── Build prompt: Rules → Company → Style → Task
-        │     Rules:   funding_program_rules dict → formatted block
-        │     Company: company_profile + website_clean_text[:30000] + transcript_clean[:30000]
-        │     Style:   style_profile patterns → formatted block
-        │     Task:    list of section headings to generate
-        ├── Call OpenAI (gpt-4o-mini, temp=0.7, response_format=json_object, timeout=120s)
-        ├── Validate JSON: all expected section IDs present, all values are strings
-        ├── On structural failure: retry up to 2 additional times (3 calls total worst case)
-        └── Merge generated content into document.content_json.sections
+    ├── Load document, resolve project_id
+    ├── Load ProjectContext (or fall back to direct assembly if absent)
+    ├── PromptBuilder(context).build_generation_prompt(sections)
+    └── LLM call (unchanged: gpt-4o-mini, temp=0.7, json_object, timeout=120s)
 ```
 
-### 4.3 Section Edit — `_generate_section_content()`
+### 5.5 Section Edit
 
-Located in `documents.py:2046`.
+Located in `documents.py:_generate_section_content()`. Called via `POST /documents/{id}/chat` when the message targets a section. Returns a suggestion only — not saved until user approves via `POST /documents/{id}/chat/confirm`. Section titles are never modified by suggestions.
 
-```
-POST /documents/{id}/chat  [message targets a specific section]
-    │
-    ├── Identify target section from message (regex + fuzzy matching)
-    ├── instruction_text = instruction or ""   [None guard]
-    ├── [Token logging] len(prompt) // 4
-    ├── Build prompt:
-    │     Style guide
-    │     Role: EDITOR not AUTHOR
-    │     Current section content (must exist)
-    │     Benutzeranweisung: <user_instruction>{instruction_text}</user_instruction>
-    │     Company context (support only)
-    ├── Call OpenAI (gpt-4o-mini, temp=0.7, max_tokens=2000, timeout=120s)
-    ├── Strip markdown artifacts via regex
-    └── Return suggested_content (NOT saved yet)
-    │
-    └── POST /documents/{id}/chat/confirm  [user clicks Approve]
-        └── Update section.content only — section.title is NEVER modified
-```
+### 5.6 Q&A
 
-### 4.4 Q&A — `_answer_question_with_context()`
+Located in `documents.py:_answer_question_with_context()`. Called via `POST /documents/{id}/chat` when the message is a question. Returns a plain text answer. No database write.
 
-Located in `documents.py:2379`.
+### 5.7 Prompt Injection Protection
 
-```
-POST /documents/{id}/chat  [message is a question]
-    │
-    ├── user_query_text = user_query or ""   [None guard]
-    ├── Assemble context: full document text + website summary + last 3 chat messages
-    ├── [Token logging] len(prompt) // 4
-    ├── Build prompt:
-    │     Context block
-    │     BENUTZERFRAGE: <user_instruction>{user_query_text}</user_instruction>
-    ├── Call OpenAI (gpt-4o-mini, temp=0.7, max_tokens=1000, timeout=120s)
-    └── Return answer (no database write)
-```
-
-### 4.5 Prompt Injection Mitigation
-
-User-controlled strings (`instruction`, `user_query`) are wrapped with XML delimiters before prompt injection:
+User-controlled strings (`instruction`, `user_query`) are wrapped with XML delimiters before all prompt injections:
 
 ```xml
 <user_instruction>
@@ -335,478 +306,303 @@ User-controlled strings (`instruction`, `user_query`) are wrapped with XML delim
 </user_instruction>
 ```
 
-This is applied at `documents.py:2157–2159` (instruction) and `documents.py:2422–2424` (user_query). None guards (`x or ""`) are applied immediately before wrapping.
+None guards are applied before wrapping: `instruction_text = instruction or ""`. Do not remove these.
 
-### 4.6 Token Logging
+### 5.8 Token Logging
 
-All six LLM call sites log prompt size before each API call:
+All LLM call sites log prompt size before each API call:
 
 ```python
 approx_tokens = len(prompt) // 4
-logger.info("LLM {step} prompt size (chars): %s", len(prompt))
-logger.info("LLM {step} prompt tokens: %s", approx_tokens)
+logger.info("LLM %s prompt size (chars): %s", step, len(prompt))
+logger.info("LLM %s prompt tokens: %s", step, approx_tokens)
 ```
 
-Step labels and locations:
-
-| Label | File | Line |
-|-------|------|------|
-| `batch generation` | `documents.py` | ~1201 |
-| `section edit` | `documents.py` | ~2206 |
-| `Q&A` | `documents.py` | ~2440 |
-| `company profile extraction` | `extraction.py` | ~132 |
-| `guideline extraction` | `guidelines_processing.py` | ~109 |
-| `style extraction` | `style_extraction.py` | ~94 |
+Never log prompt content, section text, or company data.
 
 ---
 
-## 5. Database Schema
+## 6. Knowledge Base Architecture
 
-### 5.1 Entity-Relationship Summary
+### 6.1 Purpose
+
+The knowledge base is infrastructure — not a user-facing feature. It makes the AI produce better first drafts by providing relevant examples from past applications and domain documents. Users never interact with it directly.
+
+### 6.2 Document Categories
+
+| Category | Contents | Retrieval mode |
+|----------|----------|---------------|
+| `past_application` | Historical Vorhabensbeschreibungen | Semantic (pgvector) |
+| `guideline` | Program guidelines, IB documentation | Exact (pre-extracted rules_json) |
+| `domain_document` | State programs, reporting instructions, billing documentation | Exact or semantic |
+| `style_reference` | Writing style examples | Exact (style_summary_json) |
+
+### 6.3 Data Model
 
 ```
-users (PK: email)
-  │
-  ├──< funding_programs (FK: user_email)
-  │         │
-  │         ├──< funding_program_companies >──┐
-  │         ├──< funding_program_documents    │
-  │         └──< funding_program_guidelines_summary
-  │                                           │
-  ├──< companies (FK: user_email) ───────────┘
-  │         │
-  │         ├──< documents (FK: company_id, funding_program_id)
-  │         │         └── template_id → user_templates
-  │         └──< company_documents
-  │
-  └──< user_templates (FK: user_email)
+knowledge_base_documents
+  ├─ id (UUID PK)
+  ├─ category: "past_application" | "guideline" | "domain_document" | "style_reference"
+  ├─ program_tag: "wtt" | "zim" | null
+  ├─ title
+  ├─ file_id (FK → files)
+  ├─ full_text (extracted)
+  └─ processed_at
 
-files (standalone, PK: UUID, unique: content_hash)
-  ├── funding_program_documents.file_id
-  ├── company_documents.file_id
-  └── alte_vorhabensbeschreibung_documents.file_id
-
-Cache tables (no FK relationships, keyed by hash):
-  audio_transcript_cache (key: file_content_hash)
-  website_text_cache (key: url_hash)
-  document_text_cache (key: file_content_hash)
-
-Style profile:
-  alte_vorhabensbeschreibung_documents → (combined hash) → alte_vorhabensbeschreibung_style_profile
+knowledge_base_chunks  (for semantic retrieval)
+  ├─ id (UUID PK)
+  ├─ document_id (FK → knowledge_base_documents)
+  ├─ section_type: "innovation_approach" | "state_of_art" | "einleitung" | ...
+  ├─ chunk_text
+  └─ embedding (vector, 1536-dim — text-embedding-3-small)
 ```
 
-### 5.2 Full Column Reference
+### 6.4 Retrieval
 
-#### `users`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `email` | String | PK, index |
-| `password_hash` | String | NOT NULL |
-| `created_at` | DateTime(tz) | NOT NULL, server_default=now() |
-| `reset_token_hash` | String | nullable |
-| `reset_token_expiry` | DateTime(tz) | nullable |
+`knowledge_base_retriever.py` embeds a query (project topic + company name) and performs a pgvector cosine similarity search against `knowledge_base_chunks`. Returns top-k chunks as `retrieved_examples_json`, capped at 3 to stay within the context budget.
 
-#### `funding_programs`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | Integer | PK, autoincrement |
-| `title` | String | NOT NULL |
-| `website` | String | nullable |
-| `created_at` | DateTime(tz) | NOT NULL, server_default=now() |
-| `user_email` | String | FK→users.email, index |
+**pgvector requirement:** The `vector` PostgreSQL extension must be enabled on the production database (`CREATE EXTENSION vector`). No application code change is required for this.
 
-#### `funding_program_companies` (join table)
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `funding_program_id` | Integer | FK→funding_programs.id, PK |
-| `company_id` | Integer | FK→companies.id, PK |
-| — | — | UniqueConstraint(funding_program_id, company_id) |
+### 6.5 Relationship to Existing `AlteVorhabensbeschreibung`
 
-#### `companies`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | Integer | PK, autoincrement |
-| `name` | String | NOT NULL |
-| `website` | String | nullable |
-| `audio_path` | String | nullable |
-| `website_text` | String | nullable — legacy, kept for backward compat |
-| `transcript_text` | String | nullable — legacy |
-| `website_raw_text` | Text | nullable — raw scraped |
-| `website_clean_text` | Text | nullable — boilerplate removed |
-| `transcript_raw` | Text | nullable — raw Whisper output |
-| `transcript_clean` | Text | nullable — filler words removed |
-| `processing_status` | String | server_default="pending" |
-| `processing_error` | String | nullable |
-| `created_at` | DateTime(tz) | NOT NULL, server_default=now() |
-| `updated_at` | DateTime(tz) | NOT NULL, onupdate=now() |
-| `user_email` | String | FK→users.email, NOT NULL, index |
-| `company_profile` | JSON | nullable — LLM-extracted structured facts |
-| `extraction_status` | String | nullable: "pending"/"extracted"/"failed" |
-| `extracted_at` | DateTime(tz) | nullable |
-
-#### `documents`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | Integer | PK, autoincrement |
-| `company_id` | Integer | FK→companies.id, NOT NULL, index |
-| `type` | String | NOT NULL, index ("vorhabensbeschreibung"/"vorkalkulation") |
-| `content_json` | JSON | NOT NULL |
-| `chat_history` | JSON | nullable |
-| `updated_at` | DateTime(tz) | NOT NULL, onupdate=now() |
-| `headings_confirmed` | Integer | NOT NULL, server_default="0" — 0/1, not boolean |
-| `funding_program_id` | Integer | FK→funding_programs.id, nullable, index |
-| `template_id` | UUID | FK→user_templates.id, nullable, index |
-| `template_name` | String | nullable — system template name |
-| `title` | String | nullable |
-
-**`content_json` shape:**
-```json
-{
-  "sections": [
-    { "id": "1", "title": "1. Einleitung", "content": "..." },
-    { "id": "1.1", "title": "1.1 Kontext", "content": "...", "type": "text" },
-    {
-      "id": "4",
-      "title": "4. Meilensteine",
-      "content": "",
-      "type": "milestone_table",
-      "milestone_data": { "milestones": [...], "total_expenditure": 50000 }
-    }
-  ]
-}
-```
-
-All section IDs are strings. Sections without `type` are treated as `"text"`. `milestone_table` sections are excluded from LLM generation.
-
-#### `files`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | UUID | PK, index |
-| `content_hash` | Text | UNIQUE, NOT NULL, index |
-| `file_type` | Text | nullable ("audio"/"pdf"/"docx"/"doc") |
-| `storage_path` | Text | NOT NULL — Supabase path |
-| `size_bytes` | Integer | NOT NULL |
-| `created_at` | DateTime(tz) | NOT NULL, server_default=now() |
-
-#### `user_templates`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | UUID | PK |
-| `name` | String | NOT NULL |
-| `description` | Text | nullable |
-| `template_structure` | JSON | NOT NULL — must contain `"sections"` array |
-| `user_email` | String | FK→users.email, NOT NULL, index |
-| `created_at` / `updated_at` | DateTime(tz) | standard |
-
-#### Cache tables (`audio_transcript_cache`, `website_text_cache`, `document_text_cache`)
-
-All three have the same pattern: UUID PK, hash key (unique, indexed), cached text (Text NOT NULL), `created_at`, `processed_at`. No TTL, no foreign keys. Invalidation is by hash change.
-
-#### `funding_program_guidelines_summary`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | UUID | PK |
-| `funding_program_id` | Integer | FK→funding_programs.id, UNIQUE |
-| `rules_json` | JSON | NOT NULL |
-| `source_file_hash` | Text | NOT NULL — SHA-256 of sorted combined file hashes |
-| `created_at` / `updated_at` | DateTime(tz) | standard |
-
-One row per funding program. Regenerated when `source_file_hash` changes.
-
-#### `alte_vorhabensbeschreibung_style_profile`
-| Column | Type | Constraint |
-|--------|------|-----------|
-| `id` | UUID | PK |
-| `combined_hash` | Text | UNIQUE — SHA-256 of sorted source file hashes |
-| `style_summary_json` | JSON | NOT NULL |
-| `created_at` / `updated_at` | DateTime(tz) | standard |
-
-One active row (the most recent hash). A new row is written when the source document set changes. Old rows are not automatically deleted.
+The `alte_vorhabensbeschreibung_style_profile` system is conceptually a single-category, single-hash knowledge base. It is not migrated into `knowledge_base_documents` — it remains in its own table for backward compatibility. Conceptually it belongs to the `style_reference` category.
 
 ---
 
-## 6. Async Processing
+## 7. Research Agent
 
-### 6.1 Mechanism
+### 7.1 Purpose
 
-FastAPI `BackgroundTasks` is a thin wrapper around Starlette's background task queue. It does **not** use asyncio. Tasks are **synchronous Python functions** called by Uvicorn's thread pool after the HTTP response is sent.
+`services/research_agent.py` enriches project context when company information is insufficient. It performs structured web searches and stores results as `domain_research_json` in `ProjectContext`.
 
-```python
-# In route handler:
-background_tasks.add_task(process_company_background, company_id=..., website=..., audio_path=...)
-# Response is returned to client immediately
-# process_company_background() runs in a threadpool worker afterward
-```
+### 7.2 Trigger Conditions
 
-### 6.2 `process_company_background()` — Full Sequence
+Research is triggered (during Stage 4 of context assembly) only when:
+- Company has no `company_profile`  AND
+- Company has no `website` and no uploaded documents
 
-Located in `companies.py:166`. Creates its **own database session** (does not reuse the request session):
+It is not triggered on every project creation. It is a fallback, not a default step.
 
-```
-1.  Open new SessionLocal()
-2.  Load Company from DB
-3.  Set processing_status = "processing", commit
-4.  If website:
-      scrape_about_page(website, db)  ← website_scraping.py
-        ├── Check website_text_cache (by url_hash)
-        │     HIT  → return cached text
-        │     MISS → requests.get() up to 20 pages (10s timeout per page)
-        │          → store in website_text_cache
-        └── clean_website_text()  ← text_cleaning.py
-      Set company.website_raw_text, website_clean_text, website_text (legacy)
-5.  If audio_path:
-      If audio_path looks like UUID (file_id):
-        download file from Supabase Storage to tempfile
-        transcribe_audio(tmp_path, file_content_hash, db)  ← preprocessing.py
-          ├── Check audio_transcript_cache (by content_hash)
-          │     HIT  → return cached transcript
-          │     MISS → OpenAI Whisper API (language="de", timeout=300s)
-          │          → store in audio_transcript_cache
-          └── delete tempfile
-      Else (legacy local path):
-        transcribe_audio(local_path, file_content_hash=None, db)
-        [cache not used for legacy paths — no content_hash available]
-      clean_transcript()  ← text_cleaning.py
-      Set company.transcript_raw, transcript_clean, transcript_text (legacy)
-6.  Set processing_status = "done", commit
-7.  If has_text_data AND not already_extracted:
-      extract_company_profile(website_text, transcript_text)  ← extraction.py
-        └── OpenAI LLM call (gpt-4o-mini, temp=0.0, json_object, timeout=60s)
-      Set company.company_profile, extraction_status="extracted", commit
-8.  On any exception: set processing_status = "failed", processing_error = message
-9.  Close session
-```
-
-**Status values written to `companies.processing_status`:**
-
-| Status | Set when |
-|--------|---------|
-| `"pending"` | Default on creation |
-| `"processing"` | Start of background task |
-| `"done"` | Website + audio processing complete (step 6) |
-| `"failed"` | Any unrecoverable exception |
-
-Note: Profile extraction (step 7) runs **after** `processing_status` is set to `"done"`. A failed extraction sets `extraction_status = "failed"` but does **not** revert `processing_status` to `"failed"`. The frontend considers `"done"` as the terminal state and does not wait for extraction.
-
-### 6.3 Frontend Polling
+### 7.3 Search Scope
 
 ```
-EditorPage mounts
-    │
-    ├── Check company.processing_status
-    │
-    ├── If "done" or "failed": stop
-    │
-    └── Else: setInterval(() => GET /companies/{id}, 2000ms)
-              On response: update company state
-              If "done" or "failed": clearInterval()
+Pass 1 — Company context
+  Query: "{company_name} Germany industry products technologies"
+  Output: structured company enrichment
+
+Pass 2 — Domain / State of the Art
+  Query: "{topic} state of the art {year}"
+  Output: domain_research_json.state_of_art_summary
+
+Pass 3 — Competitive landscape (brief)
+  Query: "{topic} existing solutions"
+  Output: domain_research_json.competitive_landscape
 ```
 
-There is no server-push mechanism (WebSockets, SSE). The 2-second poll interval is hardcoded at `EditorPage.tsx:453`. No backoff is applied.
+### 7.4 Security Constraints
 
-### 6.4 Guideline Processing
+- Outbound HTTP requests go to a **fixed, trusted search API endpoint only** (e.g., Brave Search API base URL)
+- The search query is user-influenced (company name + topic) but the **request target is never user-controlled**
+- All outbound URLs must be validated against RFC 1918 private IP ranges before connection
+- Raw search result snippets must not be injected directly into generation prompts — they must pass through the LLM summarisation step first
 
-Guidelines are processed synchronously within the request handler in `funding_programs.py`:
+### 7.5 Cost Controls
 
-```
-POST /funding-programs/{id}/guidelines (upload file)
-    │
-    ├── get_or_create_file()  → upload to Supabase, create files record
-    ├── extract_document_text()  → check document_text_cache → PyPDF2/python-docx
-    ├── store_document_text()  → write to document_text_cache
-    └── process_guidelines_for_funding_program()  → guidelines_processing.py
-          ├── Compute combined hash of all guideline file hashes
-          ├── If hash unchanged: return existing summary (skip LLM)
-          └── If hash changed: extract_rules_from_text() → OpenAI LLM
-                └── Update funding_program_guidelines_summary
-```
-
-This is **synchronous and blocks the request**. Uploading a large PDF with many guideline pages will hold the HTTP connection open until the LLM call completes (up to 120 seconds timeout).
+- Triggered once per project during initialisation
+- Result cached in `ProjectContext`; not re-triggered unless user explicitly requests refresh
+- Three targeted queries maximum per project
 
 ---
 
-## 7. External Services
+## 8. Database Schema
 
-### 7.1 OpenAI API
+### 8.1 New Tables (v2)
 
-**Used for:** Text generation, chat editing, Q&A, company profile extraction, guidelines extraction, style profile extraction, and audio transcription (Whisper).
+```
+projects
+  ├─ id (UUID PK)
+  ├─ name (String — e.g., "OKB Sondermaschinenbau × WTT 2025")
+  ├─ user_email (FK → users.email)
+  ├─ company_id (FK → companies.id)
+  ├─ funding_program_id (FK → funding_programs.id)
+  ├─ topic (Text — user-entered project topic)
+  ├─ status (String — see §4.3)
+  ├─ template_resolved (String — system template name or UUID)
+  ├─ created_at, updated_at (DateTime tz-aware)
 
-**Client initialisation pattern** (repeated in each module that uses it):
-```python
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key)
+project_contexts
+  ├─ id (UUID PK)
+  ├─ project_id (FK → projects.id, UNIQUE)
+  ├─ company_profile_json (JSON, nullable)
+  ├─ funding_rules_json (JSON, nullable)
+  ├─ domain_research_json (JSON, nullable)
+  ├─ retrieved_examples_json (JSON, nullable)
+  ├─ style_profile_json (JSON, nullable)
+  ├─ website_text_preview (Text, nullable — truncated)
+  ├─ context_hash (Text — combined hash for invalidation)
+  ├─ assembled_at (DateTime tz-aware, nullable)
+
+knowledge_base_documents
+  ├─ id (UUID PK)
+  ├─ category (String)
+  ├─ program_tag (String, nullable)
+  ├─ title (String)
+  ├─ file_id (FK → files.id)
+  ├─ full_text (Text)
+  ├─ processed_at (DateTime tz-aware, nullable)
+
+knowledge_base_chunks
+  ├─ id (UUID PK)
+  ├─ document_id (FK → knowledge_base_documents.id)
+  ├─ section_type (String)
+  ├─ chunk_text (Text)
+  └─ embedding (Vector 1536)
 ```
 
-There is no shared client instance. Each module creates its own. Whisper uses `client.audio.transcriptions`, all other calls use `client.chat.completions`.
+### 8.2 Document FK Addition
 
-**All LLM models used:**
+`documents` gains a nullable `project_id` FK to `projects.id` in the v2 migration. Existing documents have `project_id = NULL` and continue to work via the v1 context fallback path.
 
-| Call | Model | Endpoint |
-|------|-------|---------|
-| Text generation, editing, Q&A, extraction | `gpt-4o-mini` | `chat.completions` |
-| Audio transcription | `whisper-1` | `audio.transcriptions` |
+### 8.3 Unchanged Tables
 
-**Timeouts:**
+`users`, `companies`, `funding_programs`, `funding_program_companies`, `company_documents`, `funding_program_documents`, `funding_program_guidelines_summary`, `files`, `user_templates`, `audio_transcript_cache`, `website_text_cache`, `document_text_cache`, `alte_vorhabensbeschreibung_documents`, `alte_vorhabensbeschreibung_style_profile`.
 
-| Call | Timeout |
-|------|---------|
-| Company profile extraction | 60s |
-| Style extraction | 180s |
-| Guideline extraction | 120s |
-| Batch content generation | 120s |
-| Section edit | 120s |
-| Q&A | 120s |
-| Audio transcription | 300s |
+### 8.4 Migration Strategy
 
-**Failure mode:** If `OPENAI_API_KEY` is absent, `extraction.py` raises `ValueError` immediately. `preprocessing.py:transcribe_audio` logs an error and returns `None` (soft failure — does not block company creation). `documents.py` raises `ValueError` before making any API call if the key is not set.
-
-### 7.2 Supabase Storage
-
-**Used for:** Storing uploaded files (audio, PDF, DOCX).
-
-**Configuration:**
-```
-SUPABASE_URL          → Supabase project URL
-SUPABASE_KEY          → service_role key (bypasses Row-Level Security)
-SUPABASE_STORAGE_BUCKET → bucket name (default: "files")
-```
-
-**Storage path format:** `{file_type}/{hash[:2]}/{sha256_hash}.{ext}`
-Example: `pdf/ab/abcd1234ef567890....pdf`
-
-**Failure mode:** If Supabase is not configured, `get_or_create_file()` raises an exception — file uploads fail with HTTP 500. The application does not fall back to local storage for uploaded files in production. In development without Supabase, file features are unavailable.
-
-**Note:** Audio files for transcription are downloaded from Supabase to a `tempfile`, transcribed, then the temp file is deleted in a `finally` block.
-
-### 7.3 PostHog Analytics
-
-**Used for:** Event tracking on user registration and login.
-
-**Configuration:**
-```
-POSTHOG_API_KEY    → API key (optional)
-POSTHOG_HOST       → ingest host (default: "https://us.i.posthog.com")
-POSTHOG_DISABLED   → "true" to disable (default: "false")
-```
-
-**Lifecycle:** Initialised in the FastAPI `lifespan` context manager at startup (`init_posthog()`). Flushed and shut down cleanly on app shutdown (`shutdown_posthog()`).
-
-**Failure isolation:** All PostHog calls are wrapped in `try/except`. Analytics failures never block authentication or any other feature.
-
-**Events captured:**
-- `user_signed_up` — on successful registration
-- `user_logged_in` — on successful login
+All v2 schema changes are additive. No existing columns are modified or removed. New migrations are appended to the Alembic chain. Existing migration files are never modified.
 
 ---
 
-## 8. File Storage Architecture
+## 9. Frontend Architecture
 
-```
-User uploads file
-        │
-        ▼
-get_or_create_file(db, file_bytes, file_type)
-        │
-        ├── compute_file_hash(file_bytes)  → SHA-256 hex string
-        │
-        ├── SELECT FROM files WHERE content_hash = ?
-        │         │
-        │    EXISTS → return existing File record (is_new=False)
-        │    MISSING ↓
-        │
-        ├── upload_to_supabase_storage(file_bytes, file_type, content_hash)
-        │         └── path: {type}/{hash[:2]}/{hash}.{ext}
-        │
-        └── INSERT INTO files (id=uuid4, content_hash, file_type, storage_path, size_bytes)
-            return new File record (is_new=True)
-```
+### 9.1 Primary Routes (v2)
 
-**Deduplication:** The same file uploaded twice results in one `files` row and one Supabase object. The second upload returns the existing record immediately.
+| Route | Page | Notes |
+|-------|------|-------|
+| `/login` | `LoginPage` | Unchanged |
+| `/dashboard` | `DashboardPage` | Now shows project list (replaces entity overview) |
+| `/projects/new` | `NewProjectPage` | NEW — 3-field creation form |
+| `/projects/:id` | `ProjectWorkspacePage` | NEW — central work surface |
 
-**Download path:**
+### 9.2 Retained Routes (not in primary nav)
+
+| Route | Page | Notes |
+|-------|------|-------|
+| `/companies` | `CompaniesPage` | Accessible via settings |
+| `/funding-programs` | `FundingProgramsPage` | Accessible via settings |
+| `/documents` | `DocumentsPage` | Legacy document list |
+| `/editor/:companyId/:docType` | `EditorPage` | Accessed from workspace, not direct nav |
+| `/templates` | `TemplatesPage` | Accessible via settings |
+| `/templates/new` | `TemplateEditorPage` | Accessible via settings |
+| `/templates/:id/edit` | `TemplateEditorPage` | Accessible via settings |
+| `/alte-vorhabensbeschreibung` | `AlteVorhabensbeschreibungPage` | Admin only |
+
+Do not remove any of these routes. They remain functional.
+
+### 9.3 New Pages
+
+**`NewProjectPage`:** Single form with three required fields (Company, Funding Program, Topic) and one optional expandable section (website, documents, audio). One action: Start Analysis. Navigates to workspace on project creation.
+
+**`ProjectWorkspacePage`:** Fetches project and ProjectContext status on mount. Contains: section sidebar (pre-populated from resolved template), section editor (adapted EditorPage behavior), context panel (shows what the AI knows), AI chat panel. All state is local to this component — no new global state.
+
+### 9.4 Editor State Machine
+
+The existing `EditorPage` state machine is unchanged:
 ```
-GET /documents/{id}/export  (or any endpoint serving file bytes)
-        │
-        ▼
-download_from_supabase_storage(storage_path)
-        └── supabase.storage.from_(bucket).download(path) → bytes
+reviewHeadings → confirmedHeadings → editingContent
 ```
+In v2, this behaviour is embedded within `ProjectWorkspacePage`. The standalone `/editor/:companyId/:docType` route is retained for backward compatibility.
+
+### 9.5 Unchanged Frontend Rules
+
+- All HTTP calls go through `src/utils/api.ts` — no direct `fetch()` calls
+- `ProtectedRoute` wraps all authenticated pages
+- `AuthContext` is the only global state — do not add new Contexts or stores
+- Handle `AUTH_EXPIRED` explicitly in every component that calls the API
+- File upload `FormData` contracts are unchanged
 
 ---
 
-## 9. Template System
+## 10. External Services
 
-### 9.1 Resolution Priority
+### 10.1 OpenAI API
 
-```
-Document has template_id (UUID)?
-    YES → resolve_template(source="user", ref=template_id, user_email=...)
-              └── SELECT FROM user_templates WHERE id=? AND user_email=?
-    NO  ↓
-Document has template_name (String)?
-    YES → resolve_template(source="system", ref=template_name)
-              └── get_system_template(template_name)  ← app/templates/__init__.py
-    NO  ↓
-Default → resolve_template(source="system", ref="wtt_v1")
-```
+Used for all LLM calls and audio transcription. Six existing call sites (see §5). One new call site in `knowledge_base_retriever.py` for embedding generation (`text-embedding-3-small`).
 
-### 9.2 System Templates
+Model usage:
 
-Python modules in `backend/app/templates/`. Currently only `wtt_v1`. Each must be registered in `backend/app/templates/__init__.py`. Return a dict with shape:
-```python
-{
-  "sections": [
-    {"id": "1", "title": "1. Einleitung", "content": ""},
-    ...
-  ]
-}
-```
+| Use | Model |
+|-----|-------|
+| All text generation and extraction | `gpt-4o-mini` |
+| Audio transcription | `whisper-1` |
+| Knowledge base embeddings | `text-embedding-3-small` |
 
-### 9.3 User Templates
+### 10.2 Supabase Storage
 
-Stored in `user_templates` table. `template_structure` JSON must have a `"sections"` key with a list value. Ownership is enforced in the resolver (user_email must match).
+Used for all uploaded files. Hash-based deduplication via `file_storage.py`. Unchanged in v2.
+
+### 10.3 PostHog Analytics
+
+Analytics event capture. Graceful failure — never blocks features. Unchanged in v2.
+
+### 10.4 Web Search API (Phase 4, optional)
+
+Used by `research_agent.py`. Provider: Brave Search API or equivalent. Requires one new environment variable (`WEB_SEARCH_API_KEY`). All requests go to the provider's fixed base URL only.
 
 ---
 
-## 10. Alembic Migration Chain
+## 11. Async Processing
 
-Migrations in `backend/alembic/versions/` (abbreviated, oldest → newest):
+### 11.1 Mechanism
 
-```
-1bdfd9e377ca  initial_schema
-add_files_table
-f5c86d23bbfc  add_user_ownership_to_funding_programs
-d1e2f3a4b5c6  extend_company_model
-0fb7cad86248  add_company_profile_extraction_fields
-94fe78de25e3  add_funding_program_scraping_fields
-b7c8d9e0f1a2  remove_funding_program_scraping_fields
-a1b2c3d4e5f6  add_funding_program_documents
-add_processing_cache_tables
-c9d0e1f2a3b4  add_funding_program_guidelines_summary
-55cd193493bc  add_phase_2_5_template_system
-5118cacae937  add_template_fields_and_constraints
-f6g7h8i9j0k1  add_template_fields_to_documents
-378640cd9ae5  add_headings_confirmed_to_documents
-e2f3a4b5c6d7  add_alte_vorhabensbeschreibung
-add_chat_history_to_documents
-a2b3c4d5e6f7  allow_multiple_docs_per_company_program
-8a8eb899811f  add_missing_guidelines_columns
-```
+FastAPI `BackgroundTasks` — synchronous Python functions run in Uvicorn's thread pool after the HTTP response is returned to the client.
 
-**Known issue:** `add_chat_history_to_documents` was added as a named file without a proper revision chain. The `_safe_get_document_by_id()` function in `documents.py` (lines 44–125) implements a three-strategy fallback (ORM → deferred column → raw SQL) to handle databases where this column may be missing. Do not remove this fallback until the migration is verified in all environments.
+### 11.2 Existing Background Tasks
+
+`process_company_background()` in `companies.py:166` — unchanged. Creates its own `SessionLocal()`.
+
+### 11.3 New Background Task (v2)
+
+`assemble_project_context()` in `services/context_assembler.py` — triggered on project creation and on context invalidation. Creates its own `SessionLocal()`. Updates `project.status` throughout.
+
+### 11.4 Thread Ceiling Note
+
+Two potentially long-running background tasks now exist concurrently. Audio transcription (Whisper) can take minutes. Context assembly (multi-stage, includes crawl and LLM calls) can also take minutes. At current scale this is acceptable. Under concurrent load, thread exhaustion is a risk.
 
 ---
 
-## 11. What Breaks and Why
+## 12. Template System
+
+### 12.1 Resolution (unchanged)
+
+```
+Document has template_id (UUID)?  → user template (ownership verified)
+Document has template_name?       → system template by name
+Default                           → "wtt_v1"
+```
+
+### 12.2 v2 Change: Template Resolved at Project Creation
+
+In v2, the template is resolved once when the project is created and stored as `project.template_resolved`. Documents scoped to the project inherit this value. The user never selects a template manually.
+
+### 12.3 System Templates
+
+Python modules in `backend/app/templates/`. Currently: `wtt_v1` only. Each must be registered in `backend/app/templates/__init__.py`.
+
+---
+
+## 13. What Breaks and Why
 
 | If you do this | What breaks |
 |----------------|------------|
-| Add a new router with prefix `companies` or `documents` | SPA catch-all will incorrectly 404 — add prefix to skip list in `main.py:205` |
-| Remove `get_current_user` from an endpoint | Endpoint becomes unauthenticated — ownership checks inside the handler will also fail |
-| Change `content_json` section structure | Editor `EditorPage.tsx`, all generation/edit functions, and export renderers all assume `{id, title, content}` — will silently produce wrong output |
-| Change `headings_confirmed` from Integer to Boolean | SQLite compatibility breaks — the column is intentionally Integer |
-| Use `db.commit()` inside a background task before `process_company_background` finishes | Fine — the background task opens its own session. But the request's session is already closed at this point. |
-| Call `_generate_batch_content()` from the `/chat` endpoint | Will create content from scratch using empty-section prompts — section editing will not work correctly. These two functions have different roles and different prompt structures. |
-| Remove XML delimiters from `instruction` or `user_query` before LLM injection | Re-opens the prompt injection vulnerability at `documents.py:2157` and `documents.py:2422` |
-| Set `Base.metadata.create_all()` unconditionally at startup | Runs on PostgreSQL in production, potentially conflicting with Alembic-managed schema |
-| Add a new API route prefix without registering it in the Alembic-unrelated skip list | Not a schema issue but SPA routing will try to serve `index.html` for it |
+| Add a new router prefix without updating the SPA skip list in `main.py` | SPA catch-all silently serves `index.html` for API calls |
+| Remove `get_current_user` from any endpoint | Endpoint becomes unauthenticated; ownership checks also fail |
+| Remove the `project_id IS NULL` fallback from `documents.py` generation | All pre-v2 documents lose generation capability |
+| Call `PromptBuilder` with a `ProjectContext` that is still assembling | Partial context used for generation — warn user before allowing this |
+| Change `content_json` section structure | `EditorPage`, all generation functions, and export renderers assume `{id, title, content}` |
+| Change `headings_confirmed` from Integer to Boolean | SQLite compatibility breaks — intentionally Integer |
+| Change prompt block order in `PromptBuilder` | Generation quality shifts — German output is sensitive to ordering |
+| Remove XML delimiters from `instruction` or `user_query` | Re-opens prompt injection vulnerability |
+| Set `Base.metadata.create_all()` unconditionally at startup | Conflicts with Alembic-managed schema on PostgreSQL |
+| Add knowledge base embeddings without enabling pgvector extension | `knowledge_base_retriever.py` will error on every retrieval query |
+| Point `research_agent.py` outbound requests at a user-supplied URL | SSRF vulnerability |

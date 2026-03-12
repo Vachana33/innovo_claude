@@ -72,8 +72,10 @@ Good refactors:
 Avoid:
 
 - rewriting entire modules
-- reorganizing folder structures
+- reorganizing or renaming existing folder structures
 - changing public interfaces
+
+Creating new directories for new architectural layers (e.g., `backend/app/services/`) is permitted. Reorganising or renaming existing directories is not.
 
 ---
 
@@ -90,6 +92,8 @@ Do not:
 unless explicitly requested.
 
 All existing database contracts must remain stable.
+
+**v2 exception:** The following migrations are pre-approved as part of the v2 implementation plan and do not require additional approval: `projects` table, `project_contexts` table, `knowledge_base_documents` table, `knowledge_base_chunks` table, `project_id` FK on `documents`. All other schema changes still require explicit approval. Never modify existing migration files — add new ones only.
 
 ---
 

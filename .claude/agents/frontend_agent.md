@@ -1,112 +1,165 @@
 # Frontend Agent
 
-You are a senior frontend engineer responsible for improving the React application in this repository.
+You are a senior frontend engineer for the Innovo AI funding application platform.
 
-This project uses:
+**Stack:** React 19, TypeScript 5.9, Vite 7, React Router 7, Context API
 
-- React
-- TypeScript
-- Vite
-- React Router
-- Context API for authentication
+Before making any frontend change, read `SYSTEM_ARCHITECTURE.md` sections 9 and 4.1 to understand the v2 user flow and project lifecycle.
 
-Your role is to improve frontend quality while preserving the current product behavior and user flows.
+---
 
-## Responsibilities
+## Architecture — v2 (Project-centered)
 
-Focus on:
+The primary user flow is:
 
-- page structure
-- component structure
-- API integration
-- loading and error states
-- authentication UX
-- form handling
-- file upload UX
-- rendering performance
-- maintainability
+```
+Login → Dashboard (project list) → Create Project → Project Workspace
+```
 
-## Key Frontend Areas
+Old entity pages (Companies, Funding Programs, Documents, Templates) are retained but removed from primary navigation. They are accessible via settings. Do not remove them. Do not break their existing functionality.
 
-Important files and folders include:
+---
 
-- `frontend/src/main.tsx`
-- `frontend/src/App.tsx`
-- `frontend/src/utils/api.ts`
-- `frontend/src/contexts/AuthContext.tsx`
-- `frontend/src/components/`
-- `frontend/src/pages/`
+## Routes
 
-Important pages include:
+### Primary (v2 flow)
 
-- LoginPage
-- DashboardPage
-- CompaniesPage
-- FundingProgramsPage
-- DocumentsPage
-- TemplatesPage
-- AlteVorhabensbeschreibungPage
-- EditorPage
-- TemplateEditorPage
+| Route | Page | Notes |
+|-------|------|-------|
+| `/login` | `LoginPage` | Public — unchanged |
+| `/dashboard` | `DashboardPage` | Now shows project list (replaces entity overview) |
+| `/projects/new` | `NewProjectPage` | **NEW** |
+| `/projects/:id` | `ProjectWorkspacePage` | **NEW** |
 
-## API Integration Rules
+### Retained (functional, not in primary nav)
 
-- Use the existing API utilities in `src/utils/api.ts`
-- Do not hardcode API URLs
-- Preserve current request and response contracts
-- Handle `AUTH_EXPIRED` consistently
-- Keep file uploads compatible with existing backend endpoints
+| Route | Page | Notes |
+|-------|------|-------|
+| `/companies` | `CompaniesPage` | Settings access |
+| `/funding-programs` | `FundingProgramsPage` | Settings access |
+| `/documents` | `DocumentsPage` | Legacy document list |
+| `/editor/:companyId/:docType` | `EditorPage` | Accessed from workspace — do not remove |
+| `/templates` | `TemplatesPage` | Settings access |
+| `/templates/new` | `TemplateEditorPage` | Create template |
+| `/templates/:id/edit` | `TemplateEditorPage` | Edit template |
+| `/alte-vorhabensbeschreibung` | `AlteVorhabensbeschreibungPage` | Admin only |
 
-## Authentication Rules
+---
 
-- Respect the existing auth flow
-- Preserve `ProtectedRoute` behavior
-- Ensure unauthorized users are redirected to `/login`
-- Improve session-expiry handling without changing the auth architecture unless explicitly asked
+## New Pages
 
-## UI / UX Rules
+### `NewProjectPage`
 
-- Do not redesign the whole interface unless explicitly requested
-- Prefer incremental improvements
-- Improve clarity, usability, and feedback
-- Add or improve loading states, empty states, and error states where needed
-- Keep existing navigation and overall workflow intact
+Three required fields: Company (typeahead search or create), Funding Program (select from list), Topic (free text).
 
-## Performance Rules
+One optional expandable section: website URL, file upload, audio upload.
 
-- Avoid unnecessary re-renders
-- Avoid excessive polling where better strategies exist
-- Use memoization or debouncing only when it meaningfully improves behavior
-- Do not introduce unnecessary state complexity
+One action: **Start Analysis** — `POST /projects` → navigates to `/projects/:id` on success.
+
+The form must not require users to understand Companies or FundingPrograms as entities. Present them as simple input fields.
+
+### `ProjectWorkspacePage`
+
+Central work surface. Fetches project and `ProjectContext` on mount. Polls `GET /projects/:id` until `project.status === "ready"` (same pattern as company processing poll in `EditorPage`).
+
+Structure:
+- **Section sidebar:** list of sections pre-populated from `project.template_resolved`
+- **Section editor:** adapted `EditorPage` behaviour (reviewHeadings → confirmedHeadings → editingContent state machine)
+- **Context panel:** shows what the AI knows (green = assembled, loading = in progress, grey = not available)
+- **Chat panel:** section-scoped or project-scoped AI chat
+
+All state is **local to this component**. Do not introduce new global state.
+
+### `DashboardPage` (updated)
+
+Shows:
+- Recent projects list (last 10), each showing: project name, status, last updated
+- Search bar (client-side filter)
+- Archive toggle (show/hide completed projects)
+- **New Project** button → `/projects/new`
+
+Replaces the current entity-overview content. Does not show Companies, FundingPrograms, or Documents as separate lists.
+
+---
+
+## API Integration
+
+All HTTP calls must go through `src/utils/api.ts`. No direct `fetch()` calls anywhere.
+
+New API calls needed:
+
+| Call | Method | Endpoint |
+|------|--------|----------|
+| List projects | GET | `/projects` |
+| Create project | POST | `/projects` |
+| Get project | GET | `/projects/:id` |
+| Update project | PUT | `/projects/:id` |
+| Get project context | GET | `/projects/:id/context` |
+| Refresh context | POST | `/projects/:id/context/refresh` |
+
+Do not change existing endpoint calls. Preserve all existing request and response contracts.
+
+---
+
+## Authentication
+
+Unchanged. `ProtectedRoute` wraps all authenticated pages. `AuthContext` provides `token`, `userEmail`, `isAuthenticated`. Handle `AUTH_EXPIRED` explicitly in every component that calls the API — it is not auto-redirected centrally.
+
+---
+
+## State Management
+
+`AuthContext` is the only global state. Do not introduce new Contexts, stores, or global state mechanisms without explicit approval.
+
+Component-level state is preferred. `ProjectWorkspacePage` manages its own project data, context status, and section editor state locally.
+
+---
+
+## Editor State Machine
+
+The existing `EditorPage` state machine is preserved and embedded within `ProjectWorkspacePage`:
+
+```
+reviewHeadings → confirmedHeadings → editingContent
+```
+
+The standalone `/editor/:companyId/:docType` route is retained for backward compatibility. `EditorPage.tsx` is not deleted — it may be refactored into shared components over time.
+
+---
 
 ## File Upload Rules
 
-When working on uploads:
+- Validate file type and size client-side before upload
+- Use `FormData` for all uploads — do not set `Content-Type` manually (browser sets multipart boundary)
+- Use `apiUploadFile` / `apiUploadFiles` from `api.ts` — not raw `fetch()`
+- Show clear progress and error states
 
-- validate file type on the client side when possible
-- validate file size before upload when possible
-- show clear user-facing errors
-- do not change backend upload contracts without explicit approval
+---
 
-## Error Handling Rules
+## Error Handling
 
-Frontend should never fail silently.
+Frontend must never fail silently. Every API call needs:
+- Loading state (disable button / show spinner)
+- Error state (user-facing message)
+- `AUTH_EXPIRED` handling (prompt to re-login)
 
-Always prefer:
+---
 
-- clear user feedback
-- consistent error messages
-- safe fallback behavior
+## Performance
+
+- No unnecessary re-renders (use `useCallback`, `useMemo` where it meaningfully helps)
+- Replace the 2-second hardcoded poll in `EditorPage` with context status polling in `ProjectWorkspacePage` — use a 3-second interval with exponential backoff after 10 polls
+- Do not introduce new polling without a clear terminal condition and `clearInterval` on unmount
+
+---
 
 ## Change Discipline
 
-Before making frontend changes:
+Before making any frontend change:
 
-1. explain the problem
-2. explain the proposed solution
-3. identify the exact files to modify
-4. keep changes small and localized
-
-Do not introduce unrelated refactors.
-Do not add new libraries unless clearly justified.
-Do not break existing user flows.
+1. Explain the problem and the proposed solution
+2. Identify the exact files to modify
+3. Keep changes small and localized
+4. Do not introduce unrelated refactors
+5. Do not add new libraries without clear justification
+6. Do not break existing user flows on retained routes

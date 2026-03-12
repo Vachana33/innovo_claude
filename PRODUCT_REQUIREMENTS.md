@@ -70,6 +70,8 @@ In development, the frontend runs separately on Vite (port 5173) and the backend
 | `routers/funding_programs.py` | Funding program CRUD, guideline document upload |
 | `routers/templates.py` | User template CRUD, system template listing |
 | `routers/alte_vorhabensbeschreibung.py` | Historical document upload, style profile generation |
+| `routers/projects.py` | Project CRUD, status polling, context refresh |
+| `routers/knowledge_base.py` | Knowledge base document management (admin-only) |
 
 ### 2.3 Frontend
 
@@ -87,8 +89,10 @@ In development, the frontend runs separately on Vite (port 5173) and the backend
 | Route | Page | Purpose |
 |-------|------|---------|
 | `/login` | `LoginPage` | Public auth entry point |
-| `/dashboard` | `DashboardPage` | Overview |
-| `/companies` | `CompaniesPage` | Company management |
+| `/dashboard` | `DashboardPage` | Project list — primary entry point after login |
+| `/projects/new` | `NewProjectPage` | Project creation form |
+| `/projects/:id` | `ProjectWorkspacePage` | Project workspace — central work surface |
+| `/companies` | `CompaniesPage` | Company management (settings) |
 | `/funding-programs` | `FundingProgramsPage` | Funding program management |
 | `/documents` | `DocumentsPage` | Document list |
 | `/editor/:companyId/:docType` | `EditorPage` | Document editor (no nav layout) |
@@ -125,49 +129,60 @@ The `files` table is the canonical record. All other tables reference it by `fil
 
 ## 3. Core Workflow
 
-### Step 1 — Company Setup
+### 3.0 User-Facing Workflow (v2)
 
-1. User creates a company with optional `website` URL and/or uploads an audio file (meeting transcript).
-2. Backend dispatches a **FastAPI `BackgroundTask`** (`process_company_background` in `companies.py`).
+The user interacts with three steps only. All internal processing is automatic.
+
+1. **Create Project** — User provides: Company (select or name), Funding Program (select), Topic (one sentence). System creates a `Project` row, resolves the template, creates an empty `Document`, and triggers background context assembly.
+2. **Context Assembly** — System automatically crawls the company website, transcribes audio, extracts the company profile, loads funding rules, retrieves relevant past applications from the knowledge base, and performs domain research if no company data exists. User sees assembly status in the project workspace context panel.
+3. **Generate and Refine** — User clicks Generate in the workspace. System calls `PromptBuilder` with the assembled `ProjectContext`. User edits sections via chat. User exports the document.
+
+Users do not manually connect Companies, Funding Programs, Templates, or Documents. These are internal data structures managed by the system.
+
+---
+
+### 3.1 Internal Processing — Company Context
+
+1. Company website URL and/or audio file provided at project creation (or fetched via research agent if absent).
+2. Backend dispatches a **FastAPI `BackgroundTask`** (`process_company_background` in `companies.py`, also called by `context_assembler.py`).
 3. Background task sequence:
    - Crawl website → `website_raw_text` → clean → `website_clean_text` (cached in `website_text_cache` by URL hash)
    - Transcribe audio via Whisper API → `transcript_raw` → clean filler words → `transcript_clean` (cached in `audio_transcript_cache` by file hash)
    - Run LLM extraction → structured `company_profile` JSON stored on `Company` row
 4. `Company.processing_status` progresses: `pending` → `processing` → `done` / `failed`
-5. Frontend polls `GET /companies/{id}` every 2 seconds until status is terminal.
 
-### Step 2 — Funding Program Setup
+### 3.2 Internal Processing — Funding Program Guidelines
 
-1. User creates a funding program and optionally uploads guideline PDFs/DOCX (category `"guidelines"`).
+1. Admin creates a funding program and uploads guideline PDFs/DOCX (category `"guidelines"`).
 2. On upload, text is extracted and cached in `document_text_cache` by file hash.
 3. When guidelines change (combined file hash differs from stored `source_file_hash`), LLM extracts structured rules into `funding_program_guidelines_summary.rules_json`.
 4. Rules cache is invalidated only when the set of guideline files changes.
 
-### Step 3 — Style Reference Setup (Optional, System-Wide)
+### 3.3 Internal Processing — Style Reference (System-Wide)
 
 1. Admin uploads historical *Vorhabensbeschreibung* PDFs to the *Alte Vorhabensbeschreibung* module.
 2. On "Generate style profile": combined hash of all source files → if new, LLM call → writes one row to `alte_vorhabensbeschreibung_style_profile`.
 3. Only one style profile row is active at a time (keyed by `combined_hash`).
 4. This profile is injected into every document generation call across the system.
 
-### Step 4 — Document Creation
+### 3.4 Internal Processing — Document Creation
 
-1. User navigates to the editor with query params: `?funding_program_id=X&template_id=Y&template_name=Z&title=T`
-2. Backend resolves the template (`template_resolver.py`), creates a `Document` row with empty sections, and returns it.
+1. Triggered automatically by project creation (not manually by the user in v2).
+2. Backend resolves the template via `template_resolver.py`, creates a `Document` row with empty sections scoped to the project.
 3. Editor enters **`reviewHeadings` mode**: user can rename, add, delete, and reorder section headings.
 4. User clicks "Confirm Headings" → POST `/documents/{id}/confirm-headings` → `headings_confirmed = 1`.
 5. Editor enters **`confirmedHeadings` mode**: user clicks "Generate Content".
 
-### Step 5 — Content Generation
+### 3.5 Content Generation
 
 1. POST `/documents/{id}/generate-content` triggers `_generate_batch_content()`.
-2. Backend assembles context: funding rules + company profile + website/transcript text (truncated to 30 KB each) + style profile.
+2. In v2, context is read from `ProjectContext` via `PromptBuilder` (`services/prompt_builder.py`). If no `ProjectContext` exists (pre-v2 document, `project_id = NULL`), context is assembled directly from `Company` and `FundingProgram` rows (backward compat path).
 3. Sections are processed in batches of 3–5. Each batch is one LLM call. `milestone_table` sections are skipped.
-4. Prompt order: **Rules → Company → Style → Task** (this order is load-bearing; do not change without testing).
+4. Prompt block order: **Rules → Company → Topic/Domain → Examples → Style → Task** (load-bearing; do not change without testing).
 5. Response is strict JSON: `{ section_id: "generated text", ... }`. Validated before saving. Retries up to 2× on structural failure.
 6. Editor enters **`editingContent` mode**.
 
-### Step 6 — Chat-Based Editing
+### 3.6 Chat-Based Editing
 
 1. User types an instruction in the chat panel (e.g., "Abschnitt 2.1 kürzer fassen").
 2. POST `/documents/{id}/chat` → backend parses the message to identify the target section.
@@ -176,7 +191,7 @@ The `files` table is the canonical record. All other tables reference it by `fil
 5. User clicks **Approve** → POST `/documents/{id}/chat/confirm` → section `content` updated; section `title` is never modified from suggestions.
 6. User clicks **Reject** → no database write.
 
-### Step 7 — Export
+### 3.7 Export
 
 User downloads the document as DOCX (via `python-docx`) or PDF (via `reportlab`) using `GET /documents/{id}/export?format=docx|pdf`.
 
@@ -228,6 +243,7 @@ Many-to-many with `companies` via `funding_program_companies` join table.
 | `id` | Integer PK | |
 | `company_id` | Integer FK→companies | |
 | `funding_program_id` | Integer FK→funding_programs (nullable) | |
+| `project_id` | UUID FK→projects.id (nullable) | NULL for pre-v2 documents |
 | `type` | String | `"vorhabensbeschreibung"` / `"vorkalkulation"` |
 | `content_json` | JSON | `{ "sections": [ { "id", "title", "content", "type"?, "milestone_data"? } ] }` |
 | `chat_history` | JSON (nullable) | Array of chat message objects |
@@ -304,17 +320,62 @@ No TTL on any cache. Invalidation is by hash change only.
 2. `document.template_name` → system template by name
 3. Default: `"wtt_v1"`
 
+In v2, the template is resolved once at project creation and stored as `project.template_resolved`. Documents scoped to the project inherit this value.
+
+### 4.5 v2 Entities (Project-centered Architecture)
+
+#### `projects`
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `name` | String | e.g. "OKB Sondermaschinenbau × WTT 2025" |
+| `user_email` | String FK→users.email | Owner |
+| `company_id` | Integer FK→companies.id | |
+| `funding_program_id` | Integer FK→funding_programs.id | |
+| `topic` | Text | User-entered project topic |
+| `status` | String | `"initializing"` / `"context_loading"` / `"ready"` / `"generating"` / `"complete"` |
+| `template_resolved` | String | System template name or user template UUID; stored at creation |
+| `created_at` / `updated_at` | DateTime(tz) | Standard |
+
+#### `project_contexts`
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `project_id` | UUID FK→projects.id | UNIQUE — one context per project |
+| `company_profile_json` | JSON (nullable) | |
+| `funding_rules_json` | JSON (nullable) | |
+| `domain_research_json` | JSON (nullable) | From `research_agent.py` |
+| `retrieved_examples_json` | JSON (nullable) | From `knowledge_base_retriever.py` |
+| `style_profile_json` | JSON (nullable) | |
+| `website_text_preview` | Text (nullable) | Truncated; ready for prompt injection |
+| `context_hash` | Text | Combined hash; used for invalidation |
+| `assembled_at` | DateTime(tz, nullable) | Set when assembly completes |
+
+#### `knowledge_base_documents` / `knowledge_base_chunks`
+
+See `SYSTEM_ARCHITECTURE.md §6.3` for full schema. These tables support semantic retrieval of past applications and domain documents to enrich generation context.
+
 ---
 
 ## 5. LLM Pipeline
 
 ### 5.1 Model
 
-All LLM calls use `gpt-4o-mini`. The model name is hardcoded at each call site. There is no model configuration layer or fallback.
+All LLM calls use `gpt-4o-mini`. The model name is hardcoded at each call site. There is no model configuration layer or fallback. Knowledge base embeddings use `text-embedding-3-small` (separate model, embedding endpoint only).
+
+### 5.1.1 Context Source (v2)
+
+In v2, generation reads context from a `ProjectContext` snapshot pre-assembled by `context_assembler.py`. Context is assembled once at project creation and reused for all subsequent generation calls via `PromptBuilder` (`services/prompt_builder.py`).
+
+Two new context sources are added in v2:
+- `domain_research_json` — structured domain and company research from `research_agent.py`
+- `retrieved_examples_json` — relevant past application excerpts from `knowledge_base_retriever.py`
+
+If no `ProjectContext` exists (pre-v2 document, `project_id = NULL`), generation falls back to assembling context directly from `Company` and `FundingProgram` rows. This backward compatibility path must be preserved.
 
 ### 5.2 Call Sites
 
-There are **six** LLM call sites in the codebase:
+There are **six** LLM text generation call sites and **one** embedding call site:
 
 | # | Function | File | Purpose | Temp | Max Tokens |
 |---|----------|------|---------|------|-----------|
@@ -324,6 +385,7 @@ There are **six** LLM call sites in the codebase:
 | 4 | `_generate_batch_content()` | `documents.py:1203` | Generate initial section content | 0.7 | unlimited |
 | 5 | `_generate_section_content()` | `documents.py:2212` | Edit existing section via chat | 0.7 | 2,000 |
 | 6 | `_answer_question_with_context()` | `documents.py:2444` | Answer user questions about the document | 0.7 | 1,000 |
+| 7 | `embed_for_retrieval()` | `services/knowledge_base_retriever.py` | Generate query embedding for pgvector semantic search | n/a | n/a |
 
 ### 5.3 Prompt Architecture
 
@@ -331,15 +393,18 @@ There are **six** LLM call sites in the codebase:
 
 **Generation call (4) — `_generate_batch_content()`:**
 
-Prompt is assembled in four named sections, in this exact order:
+In v2, the prompt is assembled by `PromptBuilder` (`services/prompt_builder.py`) reading from `ProjectContext`. The block order is extended to six blocks:
+
 ```
-=== 1. FÖRDERRICHTLINIEN ===      ← funding_program_rules (from guidelines_summary)
-=== 2. FIRMENINFORMATIONEN ===    ← company_profile + website_clean_text[:30000] + transcript_clean[:30000]
-=== 3. STIL-LEITFADEN ===         ← style_profile (from alte_vorhabensbeschreibung_style_profile)
-=== 4. GENERIERUNGSAUFGABE ===    ← list of section headings to generate
+=== 1. FÖRDERRICHTLINIEN ===           ← funding_rules_json (primary constraint — always first)
+=== 2. FIRMENINFORMATIONEN ===          ← company_profile + website_text_preview
+=== 3. PROJEKTTHEMA UND DOMÄNE ===     ← topic + domain_research_json  (NEW in v2)
+=== 4. REFERENZBEISPIELE ===            ← retrieved_examples_json, max 3  (NEW in v2)
+=== 5. STIL-LEITFADEN ===               ← style_profile_json
+=== 6. GENERIERUNGSAUFGABE ===          ← list of section headings to generate
 ```
 
-**This order is load-bearing.** Rules are injected first so the model treats them as the primary constraint. Changing the order changes generation behaviour.
+**This order is load-bearing.** Rules are injected first so the model treats them as the primary constraint. The v1 four-block sequence is preserved within the v2 six-block sequence (blocks 3 and 4 are inserted between Firmeninformationen and Stil-Leitfaden). Changing the order changes generation behaviour. Prompt wording within each block is unchanged.
 
 Output: strict JSON `{ "section_id": "generated text", ... }`. Validated after every attempt. Retries up to 2 additional times on structural failure (3 total API calls worst-case).
 
