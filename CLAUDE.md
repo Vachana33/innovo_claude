@@ -11,7 +11,7 @@ Code changes must prioritize safety, clarity, and incremental improvements.
 
 1. Never perform large refactors without explicit approval.
 2. Prefer small, incremental improvements over architectural rewrites.
-3. Do not modify database schema unless explicitly requested.
+3. Do not modify database schema unless explicitly requested. **Exception:** The following v2 migrations are pre-approved: `projects` table, `project_contexts` table, `knowledge_base_documents` table, `knowledge_base_chunks` table, `project_id` FK on `documents`. All other schema changes still require explicit approval.
 4. Do not run migrations automatically.
 5. Do not modify environment variables.
 6. Do not modify deployment scripts (Render, Docker) unless instructed.
@@ -102,12 +102,13 @@ Before implementing any change:
 
 When modifying the repository, consult documents in this order:
 
-1. **PRODUCT_REQUIREMENTS.md** — defines product purpose and workflows  
-2. **SYSTEM_ARCHITECTURE.md** — explains system design and components  
-3. **CODEBASE_OVERVIEW.md** — describes repository structure  
-4. **DEVELOPMENT_RULES.md** — engineering rules and coding discipline  
-5. **AGENTS.md** — specialized agent responsibilities  
-6. **CLAUDE.md** — behavior rules for Claude
+1. **docs/PRODUCT_VISION.md** — product philosophy and design principles
+2. **PRODUCT_REQUIREMENTS.md** — defines product purpose and workflows
+3. **SYSTEM_ARCHITECTURE.md** — explains system design and components
+4. **CODEBASE_OVERVIEW.md** — describes repository structure
+5. **DEVELOPMENT_RULES.md** — engineering rules and coding discipline
+6. **AGENTS.md** — specialized agent responsibilities
+7. **CLAUDE.md** — behavior rules for Claude
 
 If conflicts arise, follow **product and architecture documents first**.
 

@@ -5,7 +5,7 @@
 Secure authentication has been implemented for the Innovo Agent application with:
 - User registration with password hashing (bcrypt)
 - User login with password verification
-- Email domain validation (@innovo-consulting.de or @gmail.com)
+- Email domain validation (@innovo-consulting.de or @aiio.de)
 - Proper error handling and user feedback
 
 ## Installation
@@ -162,7 +162,7 @@ Authenticate and log in.
 
 **Test Case 6: Invalid Email Domain**
 1. Try to register with email like `test@example.com`
-2. **Expected**: Client-side validation error: "Email must end with @innovo-consulting.de or @gmail.com"
+2. **Expected**: Client-side validation error: "Email must end with @innovo-consulting.de or @aiio.de"
 
 **Test Case 7: Password Too Short**
 1. Try to register with password less than 6 characters
@@ -172,7 +172,7 @@ Authenticate and log in.
 
 ✅ **Password Hashing**: Passwords are hashed using bcrypt before storage  
 ✅ **Case-Insensitive Email**: Email addresses are normalized to lowercase  
-✅ **Email Domain Validation**: Only @innovo-consulting.de or @gmail.com allowed  
+✅ **Email Domain Validation**: Only @innovo-consulting.de or @aiio.de allowed  
 ✅ **No Password Leakage**: Passwords are never logged or returned in responses  
 ✅ **Proper HTTP Status Codes**: 201 for creation, 409 for conflicts, 404 for not found, 401 for unauthorized  
 ✅ **Error Messages**: Clear, user-friendly error messages without exposing sensitive information

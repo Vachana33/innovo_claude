@@ -1,5 +1,7 @@
 # Quick Start Guide - Running the Innovo Agent Application
 
+> **Note:** The project structure shown in this guide reflects an early development snapshot. The authoritative repository structure is documented in `CODEBASE_OVERVIEW.md`. For local development setup, the steps below (venv, uvicorn, npm) are still correct; ignore the file tree at the bottom of this document.
+
 ## Prerequisites
 
 - **Python 3.8+** installed
@@ -167,28 +169,7 @@ Open a **new terminal window** (keep the backend running in the first terminal).
    - Open: http://localhost:5173
    - Should see the login page
 
-## Project Structure
 
-```
-Demo_innovo/
-├── backend/
-│   ├── main.py              # FastAPI app entry point
-│   ├── requirements.txt     # Python dependencies
-│   ├── innovo.db            # SQLite database (created automatically)
-│   └── app/
-│       ├── database.py      # Database configuration
-│       ├── models.py        # User model
-│       ├── schemas.py       # Pydantic schemas
-│       ├── utils.py         # Password hashing
-│       └── routers/
-│           └── auth.py       # Auth endpoints
-│
-└── frontend/
-    ├── package.json         # Node dependencies
-    └── src/
-        └── pages/
-            └── LoginPage/
-                └── LoginPage.tsx  # Updated login page
 ```
 
 ## Next Steps
