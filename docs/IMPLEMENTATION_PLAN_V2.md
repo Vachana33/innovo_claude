@@ -110,41 +110,75 @@ This phase is the foundation for all subsequent phases. It must be complete befo
 
 ### Goal
 
-Wire context assembly into the project creation lifecycle. When a project is created, a background task builds `ProjectContext` from all available sources using existing modules. The workspace context panel shows live assembly status. Generation still uses the v1 path — `PromptBuilder` is not yet wired.
+Wire context assembly into the project creation lifecycle. When a project is created, a background task runs the 5-stage pipeline, writes per-stage progress to `assembly_progress_json` (JSONB), detects company discovery success or failure, calculates a completeness score, and **always** sets `status = "ready"`. The workspace displays live assembly progress and shows a company fallback prompt when discovery fails.
 
 This phase is the bridge between the Project entity and the generation pipeline. It must be complete before Phase 3 begins.
 
 ---
 
+### Pre-Phase 2 — Phase 1 Bug Fixes (required before implementation)
+
+| File | Bug | Fix |
+|------|-----|-----|
+| `backend/app/models.py` | `Project.company_id` and `funding_program_id` declared as `Column(String)` — should be `Column(Integer)` | Change to Integer |
+| `backend/app/routers/projects.py` | `create_project` sets `status="pending"` | Change to `status="assembling"` |
+| `frontend/.../DashboardPage.tsx` | `company_id`/`funding_program_id` typed as `string \| null` | Change to `number \| null` |
+| `frontend/.../ProjectWorkspacePage.tsx` | Same type issue; `STATUS_LABELS` includes `"failed"`, missing `"generating"`/`"complete"` | Fix types; update STATUS_LABELS |
+| `frontend/.../NewProjectPage.tsx` | Company input is a dropdown (`company_id` FK) | Replace with text input for `company_name` |
+
+---
+
 ### Backend Tasks
 
-1. **`backend/app/services/`** — create the `services/` directory with an empty `__init__.py`.
+1. **New Alembic migration — `a4b5c6d7e8f9_update_projects_v2_schema`**
+   - `projects` table: add `company_name TEXT nullable`, `template_overrides_json TEXT nullable`
+   - `project_contexts` table: add `completeness_score INTEGER nullable`, `company_discovery_status VARCHAR nullable`, `assembly_progress_json JSONB nullable`
+   - `users` table: add `is_admin BOOLEAN NOT NULL DEFAULT false`
+   - Chains from `a3b4c5d6e7f8`
 
-2. **`backend/app/services/context_assembler.py`** — new file. Function: `assemble_project_context(project_id, db_url)`. Creates its own `SessionLocal()`. Executes the five-stage assembly pipeline:
-   - Stage 1: Load `company.company_profile`, `funding_program_guidelines_summary.rules_json`, `alte_vorhabensbeschreibung_style_profile.style_summary_json` from DB.
-   - Stage 2: If company has website and no `website_clean_text`: call `preprocessing.scrape_about_page()` → `text_cleaning.clean_website_text()`. If company has audio and no `transcript_clean`: call `preprocessing.transcribe_audio()`. If text data available and no `company_profile`: call `extraction.extract_company_profile()`.
-   - Stage 3: Skip knowledge base retrieval (not yet implemented). Store empty `retrieved_examples_json`.
-   - Stage 4: Skip research agent (not yet implemented). Store empty `domain_research_json`.
-   - Stage 5: Write assembled fields to `ProjectContext`. Set `project.status = "ready"`.
-   - On any exception: set `project.status = "context_loading"` with error note; do not set `"failed"` — context is partial, generation still works.
-   - Update `project.status = "context_loading"` at start of assembly.
+2. **`backend/app/models.py`** — add new columns to `Project`, `ProjectContext`, `User`. Use `JSON` as ORM type for `assembly_progress_json` (SQLite dev compat); migration uses `JSONB`.
 
-3. **`backend/app/routers/projects.py`** — update `POST /projects` to dispatch `assemble_project_context` as a `BackgroundTask` after project creation.
+3. **`backend/app/schemas.py`** — extend:
+   - `ProjectCreate`: add `company_name: Optional[str] = None`
+   - `ProjectUpdate`: add `company_name`, `template_overrides_json`
+   - `ProjectResponse` and `ProjectListItem`: add `company_name`
+   - `ProjectContextResponse`: add `completeness_score`, `company_discovery_status`, `assembly_progress_json`
 
-4. **`backend/app/routers/projects.py`** — add `POST /projects/{id}/context/refresh` endpoint to re-trigger assembly.
+4. **`backend/app/services/__init__.py`** — create `services/` directory with empty `__init__.py`.
+
+5. **`backend/app/services/context_assembler.py`** — new file:
+   - Function: `assemble_project_context(project_id: str, db_url: str)` — creates own `SessionLocal()`
+   - Constants:
+     ```python
+     CONTEXT_SCORE_WEIGHTS = {
+         "company": 25, "funding_rules": 25,
+         "domain_research": 20, "examples": 15, "style": 15,
+     }
+     ```
+   - Stage 1 — Company research: use `project.company_id` profile if available; else web-search `project.company_name`; set `company_discovery_status` (`"found"` / `"partial"` / `"not_found"`)
+   - Stage 2 — Funding rules: load guidelines for `project.funding_program_id`
+   - Stage 3 — Domain research: web search on `project.topic`; summarise before storing; best-effort (empty = not an error)
+   - Stage 4 — Historical examples: stub for Phase 2 (empty); updated in Phase 4
+   - Stage 5 — Style profile: load most recent `alte_vorhabensbeschreibung_style_profile` for `user_email`
+   - Each stage writes to `assembly_progress_json[stage_key]` before and after execution
+   - Consolidation: calculate `completeness_score` from weights; set `project.status = "ready"` unconditionally
+
+6. **`backend/app/routers/projects.py`** — additions:
+   - `POST /projects`: accept `company_name`; dispatch `assemble_project_context` as `BackgroundTask` after commit
+   - `POST /projects/{id}/context/refresh`: re-triggers assembler (sets status to `"assembling"` first)
+   - `PATCH /projects/{id}/context`: merges `company_website`/`company_description` into `company_profile_json`; appends `"source": "user_provided"`; recalculates `completeness_score`; does not re-run full assembler
+
+7. **`backend/app/routers/funding_programs.py`** — admin gate: check `current_user.is_admin` on `POST`, `PUT`, `DELETE`. Return `HTTP 403` for non-admin.
 
 ---
 
 ### Frontend Tasks
 
-1. **`frontend/src/pages/ProjectWorkspacePage/`** — add context status polling. On mount, if `project.status !== "ready"`, poll `GET /projects/:id` every 3 seconds with exponential backoff (double interval after 5 polls, max 15s). Stop on `"ready"`. Clear interval on unmount.
+1. **`NewProjectPage.tsx`** — replace company `<select>` with `<input type="text">` for `company_name`; remove `GET /companies` fetch; `funding_program_id` remains required `<select>`
 
-2. **Context panel** — display each context field with a status indicator:
-   - `company_profile_json` present → "Company profile ✓"
-   - `funding_rules_json` present → "Funding rules ✓"
-   - `style_profile_json` present → "Style guide ✓"
-   - `project.status === "context_loading"` → show spinner on missing fields
-   - Fields absent after assembly completes → grey "Not available"
+2. **`ProjectWorkspacePage.tsx`** — while `status === "assembling"`: render per-stage progress from `assembly_progress_json`; when `status === "ready"` and `company_discovery_status === "not_found"`: render fallback card with prompt for website/description; completeness indicator from `completeness_score`; fix TypeScript types
+
+3. **`DashboardPage.tsx`** — fix TypeScript types: `company_id: number | null`, `funding_program_id: number | null`
 
 ---
 
@@ -152,31 +186,44 @@ This phase is the bridge between the Project entity and the generation pipeline.
 
 | File | Change type |
 |------|-------------|
+| `backend/alembic/versions/a4b5c6d7e8f9_update_projects_v2_schema.py` | New migration |
+| `backend/app/models.py` | Add columns; fix Integer types on company_id/funding_program_id |
+| `backend/app/schemas.py` | Extend schemas |
 | `backend/app/services/__init__.py` | New directory + file |
-| `backend/app/services/context_assembler.py` | New file |
-| `backend/app/routers/projects.py` | Add background task dispatch + refresh endpoint |
-| `frontend/src/pages/ProjectWorkspacePage/` | Add context panel + status polling |
+| `backend/app/services/context_assembler.py` | New service |
+| `backend/app/routers/projects.py` | BackgroundTask + PATCH context + refresh endpoints |
+| `backend/app/routers/funding_programs.py` | Admin gate |
+| `frontend/src/pages/NewProjectPage/NewProjectPage.tsx` | Replace company dropdown with text input |
+| `frontend/src/pages/ProjectWorkspacePage/ProjectWorkspacePage.tsx` | Progress, fallback, completeness, type fixes |
+| `frontend/src/pages/DashboardPage/DashboardPage.tsx` | TypeScript type fix |
 
-**Files not touched:** `documents.py`, `companies.py`, `extraction.py`, `preprocessing.py`, `guidelines_processing.py`, `style_extraction.py`. These are called by `context_assembler.py` but are not modified.
+**Files not touched:** `documents.py`, `companies.py`, `extraction.py`, `preprocessing.py`, `guidelines_processing.py`, `style_extraction.py`, `EditorPage.tsx`, `CompaniesPage.tsx`, `FundingProgramsPage.tsx`.
 
 ---
 
 ### Compatibility Guarantees
 
-- Company processing (`process_company_background`) is unchanged. The assembler calls the same underlying functions but does not replace the existing background task.
-- If a company is already fully processed (status `"done"`, profile extracted), the assembler skips redundant steps and reads from the cache.
-- `ProjectContext` fields remain nullable throughout. Generation fallback path is not affected.
+- All pre-v2 documents (`project_id = NULL`) continue to generate via the v1 path. Unchanged.
+- Existing `process_company_background` task is not modified. The assembler reads the same DB fields but does not replace this task.
+- If a company record already has `company_profile` set, Stage 1 reads it and skips web search.
+- All new columns are nullable or have safe server defaults — existing rows unaffected.
+- Admin gate only restricts write endpoints; reads remain open.
 
 ---
 
 ### Completion Criteria
 
-- [ ] Creating a project sets `project.status = "context_loading"`.
-- [ ] After assembly completes, `project.status = "ready"` and `project_contexts` row has at least `funding_rules_json` populated (if funding program has guidelines).
-- [ ] The workspace context panel reflects assembly state in real time.
-- [ ] Polling stops correctly when `status === "ready"` and clears the interval on page navigation.
-- [ ] Refreshing context via `POST /projects/:id/context/refresh` re-triggers assembly.
-- [ ] Existing company processing workflow is unaffected.
+- [ ] Creating a project immediately sets `status = "assembling"` and triggers the assembler as a BackgroundTask
+- [ ] Frontend shows per-stage progress from `assembly_progress_json` while `status === "assembling"`
+- [ ] Polling stops correctly when `status === "ready"` and clears on page navigation
+- [ ] All projects reach `status = "ready"` even when all web research stages return empty
+- [ ] `completeness_score` is present on every assembled context (0–100)
+- [ ] `company_discovery_status` is one of `"found"` / `"partial"` / `"not_found"` on every context
+- [ ] Company fallback prompt appears in workspace when `company_discovery_status === "not_found"`
+- [ ] `PATCH /projects/:id/context` merges provided data without overwriting existing profile
+- [ ] Non-admin users receive HTTP 403 on funding program mutation endpoints
+- [ ] `POST /projects` body accepts `company_name`; NewProjectPage uses text input not dropdown
+- [ ] All pre-v2 documents and v1 workflow remain fully functional
 
 ---
 
@@ -247,6 +294,90 @@ None. This phase is backend-only.
 - [ ] Ask a question via chat — answer is returned correctly.
 - [ ] Token logging appears in logs for all three generation paths.
 - [ ] `documents.py` diff shows only removal of inline prompt construction from the three target functions. No other lines changed.
+
+---
+
+## Phase 3B — Chatbot Assistant
+
+### Goal
+
+Replace the static section-level chat interface with a project-scoped chatbot assistant. The assistant reads the current `ProjectContext` as system context, maintains a conversation history per project, and can write corrections back to context fields based on user input. This is the primary quality-control mechanism for incomplete context.
+
+This phase depends on Phase 3 (PromptBuilder must be wired) and Phase 2 (ProjectContext must exist). It runs after Phase 3 is complete.
+
+---
+
+### Backend Tasks
+
+1. **New Alembic migration** — add `project_chat_messages` table:
+   - `id`: VARCHAR PK
+   - `project_id`: VARCHAR FK → `projects.id` ON DELETE CASCADE
+   - `role`: VARCHAR (`"user"` or `"assistant"`)
+   - `content`: TEXT
+   - `created_at`: DATETIME server_default now()
+   - Index: `ix_project_chat_messages_project_id`
+
+2. **`backend/app/models.py`** — add `ProjectChatMessage` ORM model.
+
+3. **`backend/app/schemas.py`** — add `ProjectChatMessageCreate`, `ProjectChatMessageResponse`, `ProjectChatHistoryResponse`.
+
+4. **`backend/app/services/project_chat_service.py`** — new file:
+   - `handle_user_message(project_id, user_message, db)` — load `ProjectContext`, build system prompt from context, call LLM, parse response
+   - If response contains context corrections: update `company_profile_json` (merge, same pattern as `PATCH /context`), recalculate `completeness_score`
+   - Persist both user and assistant messages to `project_chat_messages`
+   - Return assistant response text
+
+5. **`backend/app/routers/project_chat.py`** — new file:
+   - `GET /projects/{id}/chat` — return full message history
+   - `POST /projects/{id}/chat` — accept `{ message: string }`, call `project_chat_service.handle_user_message()`, return assistant response
+
+6. **`backend/main.py`** — register `project_chat` router; add `"projects"` to SPA skip list already covers this since the router uses the `/projects` prefix.
+
+---
+
+### Frontend Tasks
+
+1. **`ProjectWorkspacePage.tsx`** — add chatbot panel below the generate section:
+   - Load conversation history from `GET /projects/:id/chat` on mount
+   - Render message list (user and assistant bubbles)
+   - Text input + send button → `POST /projects/:id/chat`
+   - On response: append to message list; if `completeness_score` updated, refresh project context panel
+
+---
+
+### Files Changed
+
+| File | Change type |
+|------|-------------|
+| `backend/alembic/versions/<new>.py` | New migration (project_chat_messages) |
+| `backend/app/models.py` | Add ProjectChatMessage model |
+| `backend/app/schemas.py` | Add chat schemas |
+| `backend/app/services/project_chat_service.py` | New service |
+| `backend/app/routers/project_chat.py` | New router |
+| `backend/main.py` | Register router |
+| `frontend/src/pages/ProjectWorkspacePage/ProjectWorkspacePage.tsx` | Add chatbot panel |
+
+**Files not touched:** `documents.py`, existing document-level `chat_history` column is unchanged.
+
+---
+
+### Compatibility Guarantees
+
+- Document-level chat (`POST /documents/{id}/chat`) is unchanged.
+- Existing `chat_history` JSON column on documents is not touched.
+- The chatbot only writes to `project_contexts.company_profile_json` — no other context fields are modified by user messages.
+
+---
+
+### Completion Criteria
+
+- [ ] `GET /projects/:id/chat` returns conversation history in order
+- [ ] `POST /projects/:id/chat` returns assistant response within 30s
+- [ ] Assistant response reads company and funding context from `ProjectContext`
+- [ ] User corrections to company info (e.g. "The company builds welding robots") are merged into `company_profile_json`
+- [ ] `completeness_score` is recalculated after context writes
+- [ ] Chatbot panel renders in workspace and maintains scroll position
+- [ ] Document-level chat is unaffected
 
 ---
 
@@ -440,8 +571,9 @@ This phase is frontend-only. It has no backend changes.
 | Phase | Core change | Backend | Frontend | Blocks next phase? |
 |-------|-------------|---------|----------|--------------------|
 | 1 | Project entity | models, migration, router | Dashboard, NewProject, Workspace shell | Yes — all phases depend on Project existing |
-| 2 | Context assembler | services/context_assembler.py | Context panel + polling | Yes — Phase 3 reads from ProjectContext |
-| 3 | PromptBuilder | services/prompt_builder.py, documents.py (3 functions) | None | Yes — Phases 4+5 extend PromptBuilder |
+| 2 | Context assembler + admin gate | migration, context_assembler.py, PATCH context, admin gate | Progress UI, fallback prompt, completeness indicator, company_name input | Yes — Phase 3 reads from ProjectContext |
+| 3 | PromptBuilder | services/prompt_builder.py, documents.py (3 functions) | None | Yes — Phases 3B, 4, 5 extend PromptBuilder |
+| 3B | Chatbot assistant | migration, project_chat_service.py, project_chat.py | Chatbot panel in workspace | No — independent of 4 and 5 |
 | 4 | Knowledge base | migration, retriever, KB router | None | No — Phase 5 is independent |
 | 5 | Research agent | research_agent.py | Context panel update | No — Phase 6 is independent |
 | 6 | Nav simplification | None | Layout, Dashboard | No — terminal phase |

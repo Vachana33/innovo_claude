@@ -38,7 +38,7 @@ User
        ├─ company_id          FK → companies (shared, reusable)
        ├─ funding_program_id  FK → funding_programs (shared, reusable)
        ├─ topic               Free text: "Robot automation for weld seam tracking"
-       ├─ status              initializing | context_loading | ready | generating | complete
+       ├─ status              assembling | ready | generating | complete
        ├─ template_resolved   Stored at creation; never re-resolved
        ├─ ProjectContext       Assembled once; reused for all generation calls
        └─ documents           Documents scoped to this project
@@ -95,7 +95,7 @@ All routers are registered on the root FastAPI app (no `/api` prefix).
 |-------------|----------------|--------|
 | `routers/auth.py` | `/auth/*` | Unchanged |
 | `routers/companies.py` | `/companies`, `/companies/{id}` | Unchanged |
-| `routers/funding_programs.py` | `/funding-programs`, `/funding-programs/{id}` | Unchanged |
+| `routers/funding_programs.py` | `/funding-programs`, `/funding-programs/{id}` | Mutation endpoints (POST/PUT/DELETE) admin-only |
 | `routers/documents.py` | `/documents/{company_id}/{type}`, `/documents/{id}/generate-content`, `/documents/{id}/chat`, `/documents/{id}/export` | Updated: generation reads from ProjectContext via PromptBuilder |
 | `routers/templates.py` | `/templates`, `/system-templates` | Unchanged |
 | `routers/alte_vorhabensbeschreibung.py` | `/alte-vorhabensbeschreibung` | Unchanged (retained for backward compat) |
@@ -110,10 +110,11 @@ This directory is new in v2. Services contain business logic that was previously
 
 | Service file | Responsibility |
 |-------------|---------------|
-| `context_assembler.py` | Background task: assembles `ProjectContext` from all available sources |
+| `context_assembler.py` | Background task: assembles `ProjectContext` from all available sources; always completes with `status = "ready"` |
 | `prompt_builder.py` | Constructs LLM prompts from `ProjectContext`; manages context budget |
 | `research_agent.py` | Background task: web search enrichment when company data is absent |
 | `knowledge_base_retriever.py` | Semantic similarity retrieval from `knowledge_base_chunks` (pgvector) |
+| `project_chat_service.py` | Chatbot assistant: reads `ProjectContext`, writes corrections back to context, maintains per-project conversation history |
 
 ### 3.4 Existing Modules — `backend/app/`
 
@@ -168,61 +169,124 @@ Schema management: Alembic only in production. `Base.metadata.create_all()` is s
 ```
 POST /projects
     │
-    ├── Validate: company_id, funding_program_id, topic (required)
+    ├── Accept: funding_program_id (required), company_name (text, required), topic (required)
+    ├── Accept optional: company_id (FK to existing company record)
     ├── Resolve template from FundingProgram → store as project.template_resolved
-    ├── Create Project row (status: "initializing")
-    ├── Create Document row (empty sections from resolved template)
+    ├── Create Project row (status: "assembling")
     ├── Return project to client immediately
     └── BackgroundTask → assemble_project_context()
 ```
 
 ### 4.2 Context Assembly Pipeline
 
-`context_assembler.py` runs as a background task in five sequential stages:
+`context_assembler.py` runs as a background task in five sequential stages. It **always completes with `project.status = "ready"`**, regardless of which stages return partial data. Each stage writes its status to `assembly_progress_json` (JSONB) so the frontend can display live progress.
 
-```
-Stage 1 — Retrieve stored assets         (no LLM, fast)
-    ├── Load company.company_profile_json (if exists)
-    ├── Load funding_program_guidelines_summary.rules_json (if exists)
-    └── Load alte_vorhabensbeschreibung_style_profile.style_summary_json (most recent)
+Score weights are defined as constants at the top of `context_assembler.py`:
 
-Stage 2 — Enrich company context         (async, may call LLM)
-    ├── If company has website: crawl → clean → cache (website_text_cache)
-    ├── If company has audio: Whisper → clean → cache (audio_transcript_cache)
-    ├── If company has uploaded docs: extract → clean → cache (document_text_cache)
-    └── If any text available and no profile yet: extract_company_profile() → LLM
-
-Stage 3 — Knowledge base retrieval       (pgvector query)
-    └── knowledge_base_retriever.py: embed (topic + company name) → top-k chunks
-        → retrieved_examples_json
-
-Stage 4 — Domain research                (optional, web search)
-    └── research_agent.py: triggered only if company has no profile and no website
-        → domain_research_json
-
-Stage 5 — Consolidate                    (assemble snapshot)
-    ├── Merge all sources into ProjectContext
-    ├── Compute context_hash
-    └── Set project.status = "ready"
+```python
+CONTEXT_SCORE_WEIGHTS = {
+    "company": 25,
+    "funding_rules": 25,
+    "domain_research": 20,
+    "examples": 15,
+    "style": 15,
+}
 ```
 
-**Partial context is usable.** Generation can proceed with any combination of available context fields. Missing fields produce less accurate output; they do not cause errors.
+```
+Stage 1 — Company research               (best-effort, may call web search)
+    ├── Input: project.company_id (if set) → load existing company_profile from DB
+    ├── Else: project.company_name → web search → parse result
+    ├── Set company_discovery_status:
+    │       "found"    → full company profile retrieved (industry, products, tech)
+    │       "partial"  → limited info found (website only or minimal data)
+    │       "not_found"→ no reliable match
+    ├── Write → company_profile_json
+    └── Write → assembly_progress_json["company"]
 
-### 4.3 Project Status Values
+Stage 2 — Funding rules                  (reliable, loads pre-stored guidelines)
+    ├── Load guidelines documents linked to project.funding_program_id
+    ├── Write → funding_rules_json
+    └── Write → assembly_progress_json["funding_rules"]
+
+Stage 3 — Domain research                (best-effort, web search)
+    ├── Web search using project.topic keywords
+    ├── Summarise results before injecting (do not inject raw search snippets)
+    ├── Write → domain_research_json (empty if no results — not an error)
+    └── Write → assembly_progress_json["domain_research"]
+
+Stage 4 — Historical examples            (knowledge base retrieval)
+    ├── Phase 2: stub — writes empty retrieved_examples_json
+    ├── Phase 4+: knowledge_base_retriever.retrieve_similar_chunks(topic, program_tag, top_k=3)
+    └── Write → assembly_progress_json["examples"]
+
+Stage 5 — Style profile                  (loads stored style, reliable)
+    ├── Load most recent alte_vorhabensbeschreibung_style_profile for user_email
+    ├── Write → style_profile_json (empty if none exists — not an error)
+    └── Write → assembly_progress_json["style"]
+
+Consolidation                            (always runs)
+    ├── Calculate completeness_score using CONTEXT_SCORE_WEIGHTS
+    ├── Update context_hash
+    └── Set project.status = "ready"   ← unconditional
+```
+
+**Partial context is usable.** Missing fields produce less accurate output; they do not block generation. The chat assistant layer allows users to add missing information conversationally after generation.
+
+### 4.3 Company Discovery Fallback
+
+When `company_discovery_status = "not_found"`, the frontend shows a fallback prompt:
+
+```
+We could not find enough information about [company_name].
+Please provide one of the following:
+• Website URL
+• Short company description
+• Upload a document
+```
+
+User-provided information is submitted to `PATCH /projects/{id}/context`. The endpoint merges into the existing `company_profile_json` (does not overwrite) and appends `"source": "user_provided"`. `completeness_score` is recalculated. The full assembler does not re-run.
+
+### 4.4 Completeness Scoring
+
+`completeness_score` (INTEGER, 0–100) is stored on `project_contexts`. It is calculated from the five stage scores using `CONTEXT_SCORE_WEIGHTS`. A stage scores its full weight if the relevant field is non-null and non-empty; zero otherwise.
+
+The frontend uses this to display:
+```
+Context: 60% complete
+Some information is missing. Add details via chat.
+```
+
+### 4.5 Project Status Values
 
 | Status | Set when |
 |--------|---------|
-| `initializing` | Project row created, context assembly not yet started |
-| `context_loading` | Context assembly background task is running |
+| `assembling` | Project row created; context assembly background task is running |
 | `ready` | ProjectContext assembled; document generation is available |
 | `generating` | Content generation in progress |
 | `complete` | Document exported |
 
-### 4.4 Context Invalidation
+`"pending"`, `"failed"`, `"initializing"`, `"context_loading"` are not valid lifecycle states in v2. The assembler never sets `"failed"`; it always reaches `"ready"`.
+
+### 4.6 Chatbot Assistant
+
+The workspace includes a chatbot assistant (Phase 3B) scoped to the project rather than a single document. It stores conversation history in `project_chat_messages`. The assistant reads `ProjectContext` as system context and can write corrections back to `company_profile_json` based on user messages.
+
+Example interaction:
+```
+User:      The company focuses on robotics for welding automation.
+Assistant: Understood. I've updated the company profile and will regenerate section 2.
+```
+
+New service: `services/project_chat_service.py`. New router: `routers/project_chat.py`. New table: `project_chat_messages`.
+
+This is separate from the existing document-level `chat_history` JSON column, which is unchanged.
+
+### 4.7 Context Invalidation
 
 When the user uploads new company documents or new guideline files:
 1. The relevant cache tables are updated (hash-based, as before)
-2. `project.status` reverts to `context_loading`
+2. `project.status` reverts to `assembling`
 3. `assemble_project_context()` is re-triggered
 4. On completion, `ProjectContext` is updated and `project.status` returns to `ready`
 

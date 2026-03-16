@@ -27,6 +27,9 @@ def create_funding_program(
     """
     Create a new funding program.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
     if not program_data.title or not program_data.title.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,6 +105,9 @@ def update_funding_program(
     """
     Update an existing funding program.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
         FundingProgram.user_email == current_user.email
@@ -147,6 +153,9 @@ def delete_funding_program(
     """
     Delete a funding program.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
         FundingProgram.user_email == current_user.email

@@ -231,3 +231,84 @@ class AlteVorhabensbeschreibungDocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# v2 Project schemas
+# ---------------------------------------------------------------------------
+
+class ProjectCreate(BaseModel):
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None
+    funding_program_id: Optional[int] = None
+    topic: str
+
+
+class ProjectUpdate(BaseModel):
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None
+    funding_program_id: Optional[int] = None
+    topic: Optional[str] = None
+    is_archived: Optional[bool] = None
+    template_overrides_json: Optional[str] = None
+
+
+class ProjectContextPatch(BaseModel):
+    company_website: Optional[str] = None
+    company_description: Optional[str] = None
+
+
+class ProjectContextResponse(BaseModel):
+    id: str
+    project_id: str
+    company_profile_json: Optional[str] = None
+    funding_rules_json: Optional[str] = None
+    domain_research_json: Optional[str] = None
+    retrieved_examples_json: Optional[str] = None
+    style_profile_json: Optional[str] = None
+    website_text_preview: Optional[str] = None
+    context_hash: Optional[str] = None
+    # Phase 2: assembly tracking
+    completeness_score: Optional[int] = None
+    company_discovery_status: Optional[str] = None
+    assembly_progress_json: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectResponse(BaseModel):
+    id: str
+    user_email: str
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None       # FK-resolved name (Phase 1) or free-text (Phase 2)
+    funding_program_id: Optional[int] = None
+    funding_program_title: Optional[str] = None
+    topic: str
+    status: str
+    is_archived: bool
+    template_overrides_json: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    context: Optional[ProjectContextResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectListItem(BaseModel):
+    id: str
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None       # FK-resolved name (Phase 1) or free-text (Phase 2)
+    funding_program_id: Optional[int] = None
+    funding_program_title: Optional[str] = None
+    topic: str
+    status: str
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

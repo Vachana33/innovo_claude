@@ -30,7 +30,7 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   const navItems = [
-    { path: "/dashboard", label: "Dashboard", icon: "📊" },
+    { path: "/dashboard", label: "Projects", icon: "🗂️" },
     { path: "/funding-programs", label: "Funding Programs", icon: "💼" },
     { path: "/companies", label: "Companies", icon: "🏢" },
     { path: "/documents", label: "Documents", icon: "📄" },

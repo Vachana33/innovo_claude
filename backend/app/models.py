@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Table, UniqueConstraint, JSON, Text
+from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Table, UniqueConstraint, JSON, Text, Boolean, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -14,6 +14,8 @@ class User(Base):
     # Password reset fields - stored as hashed token for security
     reset_token_hash = Column(String, nullable=True)  # Hashed reset token
     reset_token_expiry = Column(DateTime(timezone=True), nullable=True)  # Token expiration time
+    # Phase 2: admin flag for funding program management gate
+    is_admin = Column(Boolean, nullable=False, default=False)
 
     # Relationships to user-owned resources
     funding_programs = relationship("FundingProgram", back_populates="user")
@@ -108,6 +110,9 @@ class Document(Base):
 
     # Optional title to distinguish multiple documents per (company, funding_program, type)
     title = Column(String, nullable=True)
+
+    # v2: nullable FK to project; NULL = pre-v2 document (backward-compat fallback applies)
+    project_id = Column(String, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Relationships (no unique constraint - multiple docs per company+program+type allowed)
     company = relationship("Company", backref="documents")
@@ -281,3 +286,61 @@ class AlteVorhabensbeschreibungStyleProfile(Base):
     style_summary_json = Column(JSON, nullable=False)  # Extracted writing style patterns
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class Project(Base):
+    """
+    v2 Project entity — the central coordination layer for document generation.
+    Binds a user, company, funding program, and topic into a single workspace.
+    """
+    __tablename__ = "projects"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email = Column(String, ForeignKey("users.email", ondelete="CASCADE"), nullable=False)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
+    funding_program_id = Column(Integer, ForeignKey("funding_programs.id", ondelete="SET NULL"), nullable=True)
+    # Phase 2: free-text company name for projects created without a pre-existing Company record
+    company_name = Column(Text, nullable=True)
+    # Phase 2: optional JSON overrides for template structure at project level
+    template_overrides_json = Column(Text, nullable=True)
+    topic = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="assembling")  # assembling | ready | generating | complete
+    is_archived = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    context = relationship("ProjectContext", back_populates="project", uselist=False, cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_projects_user_email", "user_email"),
+        Index("ix_projects_company_id", "company_id"),
+        Index("ix_projects_funding_program_id", "funding_program_id"),
+        Index("ix_projects_created_at", "created_at"),
+    )
+
+
+class ProjectContext(Base):
+    """
+    Pre-assembled context snapshot for a project.
+    Created once by the context assembler; regenerated when inputs change.
+    All JSON fields are nullable — assembly may be partial.
+    """
+    __tablename__ = "project_contexts"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True)
+    company_profile_json = Column(Text, nullable=True)
+    funding_rules_json = Column(Text, nullable=True)
+    domain_research_json = Column(Text, nullable=True)
+    retrieved_examples_json = Column(Text, nullable=True)
+    style_profile_json = Column(Text, nullable=True)
+    website_text_preview = Column(Text, nullable=True)
+    context_hash = Column(String, nullable=True)
+    # Phase 2: assembly tracking fields
+    completeness_score = Column(Integer, nullable=True)
+    company_discovery_status = Column(String, nullable=True)  # "found" | "partial" | "not_found"
+    assembly_progress_json = Column(JSON, nullable=True)  # per-stage progress map
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    project = relationship("Project", back_populates="context")

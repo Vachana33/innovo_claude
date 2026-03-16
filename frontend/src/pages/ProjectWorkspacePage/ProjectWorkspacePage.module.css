@@ -1,0 +1,367 @@
+.page {
+  min-height: 100vh;
+  padding: 2rem 1.5rem;
+  background: var(--brand-surface, #f9fafb);
+}
+
+.topBar {
+  margin-bottom: 1.5rem;
+}
+
+.backButton {
+  background: none;
+  border: none;
+  color: var(--brand-text-medium);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.backButton:hover {
+  color: var(--brand-text-dark);
+}
+
+.message {
+  color: var(--brand-text-medium);
+  font-size: 0.95rem;
+}
+
+.errorMessage {
+  color: #dc2626;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 1.5rem;
+  align-items: start;
+  max-width: 1100px;
+}
+
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Main --- */
+.main {
+  background: #fff;
+  border: 1px solid var(--brand-border);
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.topic {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.status_pending {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.status_assembling {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status_ready {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status_failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.statusLabel {
+  font-size: 0.9rem;
+  color: var(--brand-text-medium);
+}
+
+.generateSection {
+  border-top: 1px solid var(--brand-border);
+  padding-top: 1.5rem;
+}
+
+.generateHint {
+  font-size: 0.9rem;
+  color: var(--brand-text-medium);
+  margin: 0 0 1rem;
+}
+
+.generateButton {
+  padding: 0.7rem 1.5rem;
+  background: var(--brand-primary, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.generateButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.generateButton:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  background: #fff;
+  border: 1px solid var(--brand-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.sidebarTitle {
+  margin: 0 0 1.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+}
+
+.contextItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+}
+
+.contextLabel {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--brand-text-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.contextValue {
+  font-size: 0.9rem;
+  color: var(--brand-text-dark);
+  word-break: break-word;
+}
+
+/* ── Assembly progress panel ── */
+.progressPanel {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.progressTitle {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.stageList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.stageItem {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+}
+
+.stageDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stageDot_pending { background: #d1d5db; }
+.stageDot_running { background: #f59e0b; }
+.stageDot_done    { background: #10b981; }
+.stageDot_failed  { background: #ef4444; }
+
+.stageLabel {
+  flex: 1;
+  color: var(--brand-text-dark);
+}
+
+.stageStatus {
+  font-size: 0.78rem;
+  color: var(--brand-text-medium);
+  text-transform: capitalize;
+}
+
+/* ── Company fallback card ── */
+.fallbackCard {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.fallbackTitle {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #9a3412;
+}
+
+.fallbackHint {
+  margin: 0 0 1rem;
+  font-size: 0.88rem;
+  color: #7c3a1e;
+}
+
+.fallbackForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fallbackLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--brand-text-dark);
+}
+
+.fallbackInput,
+.fallbackTextarea {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  font-size: 0.9rem;
+  outline: none;
+  font-family: inherit;
+  background: #fff;
+}
+
+.fallbackTextarea {
+  resize: vertical;
+}
+
+.fallbackInput:focus,
+.fallbackTextarea:focus {
+  border-color: #f97316;
+}
+
+.fallbackError {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #dc2626;
+}
+
+.fallbackButton {
+  align-self: flex-start;
+  padding: 0.5rem 1.25rem;
+  background: #f97316;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.fallbackButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fallbackButton:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+/* ── Section list ── */
+.sectionListSection {
+  border-top: 1px solid var(--brand-border);
+  padding-top: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.sectionListTitle {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+}
+
+.sectionList {
+  list-style: disc;
+  margin: 0;
+  padding: 0 0 0 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.sectionItem {
+  font-size: 0.88rem;
+  color: var(--brand-text-dark);
+}
+
+/* ── Completeness score ── */
+.completenessRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.completenessTrack {
+  flex: 1;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.completenessFill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.completenessValue {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+  white-space: nowrap;
+}

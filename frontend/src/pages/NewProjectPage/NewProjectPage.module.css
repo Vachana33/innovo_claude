@@ -1,0 +1,133 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 1rem;
+  background: var(--brand-surface, #f9fafb);
+}
+
+.card {
+  width: 100%;
+  max-width: 560px;
+  background: #fff;
+  border: 1px solid var(--brand-border);
+  border-radius: 16px;
+  padding: 2.5rem;
+}
+
+.backRow {
+  margin-bottom: 1.5rem;
+}
+
+.backButton {
+  background: none;
+  border: none;
+  color: var(--brand-text-medium);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.backButton:hover {
+  color: var(--brand-text-dark);
+}
+
+.title {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+}
+
+.subtitle {
+  margin: 0 0 2rem;
+  font-size: 0.95rem;
+  color: var(--brand-text-medium);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--brand-text-dark);
+}
+
+.required {
+  color: #dc2626;
+}
+
+.select {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: #fff;
+  outline: none;
+}
+
+.select:focus {
+  border-color: var(--brand-primary, #2563eb);
+}
+
+.input {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  outline: none;
+  font-family: inherit;
+}
+
+.input:focus {
+  border-color: var(--brand-primary, #2563eb);
+}
+
+.textarea {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+}
+
+.textarea:focus {
+  border-color: var(--brand-primary, #2563eb);
+}
+
+.error {
+  color: #dc2626;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.submitButton {
+  padding: 0.75rem;
+  background: var(--brand-primary, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+
+.submitButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.submitButton:not(:disabled):hover {
+  opacity: 0.9;
+}

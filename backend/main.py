@@ -48,7 +48,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 from app.database import engine, Base  # noqa: E402
-from app.routers import auth, funding_programs, companies, documents, templates, alte_vorhabensbeschreibung  # noqa: E402
+from app.routers import auth, funding_programs, companies, documents, templates, alte_vorhabensbeschreibung, projects  # noqa: E402
 from app.posthog_client import init_posthog, shutdown_posthog, capture_event  # noqa: E402
 from app.observability import set_request_id, reset_request_id, get_request_id  # noqa: E402
 
@@ -216,6 +216,7 @@ app.include_router(companies.router, tags=["companies"])
 app.include_router(documents.router, tags=["documents"])
 app.include_router(templates.router, tags=["templates"])
 app.include_router(alte_vorhabensbeschreibung.router, tags=["alte-vorhabensbeschreibung"])
+app.include_router(projects.router, tags=["projects"])
 
 # Serve frontend static files if dist directory exists (for production deployment)
 # Frontend dist directory should be copied to backend/static during Docker build
@@ -263,7 +264,7 @@ async def serve_spa(full_path: str, request: Request):
         raise StarletteHTTPException(status_code=404, detail="Not found")
     
     # Don't serve index.html for API routes (these should have been handled by routers above)
-    if full_path.startswith(("auth/", "funding-programs", "companies", "documents", "templates", "health", "assets/")):
+    if full_path.startswith(("auth/", "funding-programs", "companies", "documents", "templates", "health", "assets/", "projects")):
         raise StarletteHTTPException(status_code=404, detail="Not found")
     
     # Serve index.html for all other routes (SPA routing)

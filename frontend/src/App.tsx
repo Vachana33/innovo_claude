@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import LoginPage from "./pages/LoginPage/LoginPage";
 import DashboardPage from "./pages/DashboardPage/DashboardPage";
+import NewProjectPage from "./pages/NewProjectPage/NewProjectPage";
+import ProjectWorkspacePage from "./pages/ProjectWorkspacePage/ProjectWorkspacePage";
 import FundingProgramsPage from "./pages/FundingProgramsPage/FundingProgramsPage";
 import CompaniesPage from "./pages/CompaniesPage/CompaniesPage";
 import DocumentsPage from "./pages/DocumentsPage/DocumentsPage";
@@ -109,6 +111,24 @@ function App() {
         }
       />
       
+      {/* v2 Project routes - no Layout wrapper (full-screen workspace) */}
+      <Route
+        path="/projects/new"
+        element={
+          <ProtectedRoute>
+            <NewProjectPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:id"
+        element={
+          <ProtectedRoute>
+            <ProjectWorkspacePage />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Default redirect to dashboard */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
