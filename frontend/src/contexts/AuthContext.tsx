@@ -2,15 +2,18 @@ import { createContext, useState, useContext, type ReactNode } from "react";
 import {
   TOKEN_STORAGE_KEY,
   USER_EMAIL_KEY,
+  IS_ADMIN_KEY,
   decodeJWT,
 } from "../utils/authUtils";
+import { apiGet } from "../utils/api";
 import { debugLog } from "../utils/debugLog";
 
 interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   userEmail: string | null;
-  login: (token: string, email?: string) => void;
+  isAdmin: boolean;
+  login: (token: string, email?: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -24,30 +27,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | null>(
     localStorage.getItem(USER_EMAIL_KEY)
   );
+  const [isAdmin, setIsAdmin] = useState<boolean>(
+    localStorage.getItem(IS_ADMIN_KEY) === "true"
+  );
 
   const isAuthenticated = Boolean(token);
 
-  const login = (newToken: string, email?: string) => {
+  const login = async (newToken: string, email?: string): Promise<void> => {
+    // Store token in localStorage so apiGet can authenticate the /auth/me call.
+    // We do NOT call setToken yet — isAuthenticated stays false until we confirm the role.
     localStorage.setItem(TOKEN_STORAGE_KEY, newToken);
-    setToken(newToken);
 
     const extractedEmail = email || decodeJWT(newToken);
     if (extractedEmail) {
       localStorage.setItem(USER_EMAIL_KEY, extractedEmail);
-      setUserEmail(extractedEmail);
+    }
+
+    try {
+      const me = await apiGet<{ email: string; is_admin: boolean }>("/auth/me");
+      const adminStatus = me.is_admin;
+
+      localStorage.setItem(IS_ADMIN_KEY, String(adminStatus));
+      setToken(newToken);
+      if (extractedEmail) setUserEmail(extractedEmail);
+      setIsAdmin(adminStatus);
+    } catch {
+      // /auth/me failed — we cannot determine the user's role.
+      // Clean up and prevent login from completing.
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(USER_EMAIL_KEY);
+      localStorage.removeItem(IS_ADMIN_KEY);
+      throw new Error("Failed to verify user role. Please try again.");
     }
   };
 
   const logout = () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     localStorage.removeItem(USER_EMAIL_KEY);
+    localStorage.removeItem(IS_ADMIN_KEY);
     setToken(null);
     setUserEmail(null);
+    setIsAdmin(false);
   };
 
   return (
     <AuthContext.Provider
-      value={{ token, isAuthenticated, userEmail, login, logout }}
+      value={{ token, isAuthenticated, userEmail, isAdmin, login, logout }}
     >
       {children}
     </AuthContext.Provider>

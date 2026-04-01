@@ -250,7 +250,7 @@ class ProjectUpdate(BaseModel):
     funding_program_id: Optional[int] = None
     topic: Optional[str] = None
     is_archived: Optional[bool] = None
-    template_overrides_json: Optional[str] = None
+    template_overrides_json: Optional[dict] = None
 
 
 class ProjectContextPatch(BaseModel):
@@ -258,15 +258,33 @@ class ProjectContextPatch(BaseModel):
     company_description: Optional[str] = None
 
 
+class ProjectChatMessageCreate(BaseModel):
+    message: str
+
+
+class ProjectChatMessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectChatHistoryResponse(BaseModel):
+    messages: List[ProjectChatMessageResponse]
+
+
 class ProjectContextResponse(BaseModel):
     id: str
     project_id: str
-    company_profile_json: Optional[str] = None
-    funding_rules_json: Optional[str] = None
-    domain_research_json: Optional[str] = None
-    retrieved_examples_json: Optional[str] = None
-    style_profile_json: Optional[str] = None
-    website_text_preview: Optional[str] = None
+    company_profile_json: Optional[dict] = None
+    funding_rules_json: Optional[dict] = None
+    domain_research_json: Optional[dict] = None
+    retrieved_examples_json: Optional[dict] = None
+    style_profile_json: Optional[dict] = None
+    website_text_preview: Optional[str] = None  # plain text, not JSON
     context_hash: Optional[str] = None
     # Phase 2: assembly tracking
     completeness_score: Optional[int] = None
@@ -289,7 +307,7 @@ class ProjectResponse(BaseModel):
     topic: str
     status: str
     is_archived: bool
-    template_overrides_json: Optional[str] = None
+    template_overrides_json: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     context: Optional[ProjectContextResponse] = None
@@ -309,6 +327,101 @@ class ProjectListItem(BaseModel):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# v2 Project — document & section editing schemas
+# ---------------------------------------------------------------------------
+
+class ProjectSectionItem(BaseModel):
+    id: str
+    title: str
+    type: str = "text"
+    content: Optional[str] = ""
+
+
+class ProjectDocumentResponse(BaseModel):
+    document_id: int
+    sections: List[ProjectSectionItem]
+    has_content: bool  # True if any section has non-empty content
+
+
+class ProjectSectionsUpdate(BaseModel):
+    sections: List[ProjectSectionItem]
+
+
+class ProjectGenerateResponse(BaseModel):
+    status: str  # "generating"
+
+
+class SectionProposeEditRequest(BaseModel):
+    instruction: str
+    additional_context: Optional[str] = None
+
+
+class SectionProposeEditResponse(BaseModel):
+    section_id: str
+    proposed_content: str
+
+
+class ProjectSectionContentPatch(BaseModel):
+    content: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Knowledge Base
+# ---------------------------------------------------------------------------
+
+class KnowledgeBaseDocumentResponse(BaseModel):
+    id: str          # UUID as string
+    filename: str
+    category: str
+    program_tag: Optional[str] = None
+    file_id: Optional[str] = None   # NULL for scrape-sourced docs
+    uploaded_by: str
+    created_at: datetime
+
+    @field_validator("id", "file_id", mode="before")
+    @classmethod
+    def coerce_uuid_to_str(cls, v: object) -> Optional[str]:
+        """Coerce UUID objects to str when reading from ORM (UUID(as_uuid=True) columns)."""
+        if v is None:
+            return None
+        return str(v)
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Funding Program Sources (web scraping)
+# ---------------------------------------------------------------------------
+
+class FundingProgramSourceCreate(BaseModel):
+    funding_program_id: int
+    url: str
+    label: Optional[str] = None
+
+
+class FundingProgramSourceResponse(BaseModel):
+    id: str
+    funding_program_id: int
+    url: str
+    label: Optional[str] = None
+    status: str
+    last_scraped_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def coerce_uuid_to_str(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        return str(v)
 
     class Config:
         from_attributes = True

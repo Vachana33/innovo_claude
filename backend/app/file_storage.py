@@ -1,321 +1,286 @@
 """
-File storage utility for hash-based deduplication and Supabase Storage integration.
-Phase 1: Infrastructure & Deduplication
+File storage utility — hash-based deduplication + Supabase Storage integration.
+
+Public API:
+  compute_file_hash(file_bytes)           -> str
+  get_supabase_client()                   -> Client | None
+  upload_to_supabase_storage(...)         -> str          (raises on failure)
+  get_or_create_file(db, ...)             -> (File, bool)
+  get_file_by_id(db, file_id)             -> File | None
+  download_from_supabase_storage(path)    -> bytes | None
 """
 import hashlib
-import os
 import logging
-from typing import Optional, Tuple
-from sqlalchemy.orm import Session
-from app.models import File
 import uuid
-from pathlib import Path
-from dotenv import load_dotenv
+from typing import Optional, Tuple
 
-# Import StorageApiError for proper error handling
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.models import File
+
 try:
     from storage3.exceptions import StorageApiError
 except ImportError:
-    # Fallback if storage3 is not available
-    StorageApiError = Exception
-
-# Load .env file if it exists (fallback in case main.py hasn't loaded it yet)
-BASE_DIR = Path(__file__).resolve().parent.parent
-ENV_PATH = BASE_DIR / ".env"
-if ENV_PATH.exists():
-    load_dotenv(dotenv_path=ENV_PATH)
+    StorageApiError = Exception  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
 
-# Supabase configuration from environment variables
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "files")
+# MIME types by file-type key
+_CONTENT_TYPE_MAP: dict[str, str] = {
+    "audio": "audio/mpeg",
+    "pdf":   "application/pdf",
+    "docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc":   "application/msword",
+}
+
+# Storage extension by file-type key
+_EXT_MAP: dict[str, str] = {
+    "audio": "m4a",
+    "pdf":   "pdf",
+    "docx":  "docx",
+    "doc":   "doc",
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _is_payload_too_large(err: Exception) -> bool:
+    msg = str(err)
+    return "413" in msg or "Payload too large" in msg or "exceeded the maximum allowed size" in msg
+
+
+def _storage_path(file_type: str, content_hash: str) -> str:
+    """Build the deterministic storage path for a file."""
+    ext = _EXT_MAP.get(file_type, "bin")
+    return f"{file_type}/{content_hash[:2]}/{content_hash}.{ext}"
+
+
+def _attempt_upload(supabase, bucket: str, path: str, file_bytes: bytes,
+                    content_type: str) -> None:
+    """
+    Try uploading with content-type, fall back to no options if the SDK
+    rejects the file_options format (older SDK versions).
+
+    Raises StorageApiError or Exception on all other failures.
+    Re-raises StorageApiError directly so 413 detection propagates cleanly.
+    """
+    try:
+        supabase.storage.from_(bucket).upload(
+            path=path,
+            file=file_bytes,
+            file_options={"content-type": content_type},
+        )
+        return
+    except StorageApiError:
+        raise   # caller handles 413 and other storage errors
+    except Exception as primary_err:
+        err_str = str(primary_err).lower()
+        if "bool" not in err_str and "encode" not in err_str:
+            logger.error("file_storage | upload error path=%s error=%s", path, primary_err, exc_info=True)
+            raise
+
+    # Fallback: upload without file_options (SDK format mismatch)
+    logger.warning("file_storage | retrying upload without file_options path=%s", path)
+    supabase.storage.from_(bucket).upload(path=path, file=file_bytes)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def compute_file_hash(file_bytes: bytes) -> str:
-    """
-    Compute SHA256 hash of file bytes.
-
-    Args:
-        file_bytes: The file content as bytes
-
-    Returns:
-        SHA256 hash as hexadecimal string
-    """
+    """Return the SHA-256 hex digest of file_bytes."""
     return hashlib.sha256(file_bytes).hexdigest()
 
 
 def get_supabase_client():
     """
-    Get Supabase client instance using service_role key.
+    Return an authenticated Supabase client or None if Supabase is not
+    configured.
 
-    Note: Backend uses service_role key which bypasses RLS policies.
-    This allows full access to private storage buckets without requiring
-    storage policies.
-
-    Returns:
-        Supabase client or None if not configured
+    Uses the service-role key, which bypasses RLS — for backend use only.
+    Settings are read from the cached get_settings() singleton so env vars
+    are always resolved after load_dotenv() has run in main.py.
     """
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        logger.warning("Supabase not configured (SUPABASE_URL or SUPABASE_KEY not set)")
+    try:
+        settings = get_settings()
+    except Exception as e:
+        logger.warning("file_storage | settings unavailable: %s", e)
         return None
 
     try:
         from supabase import create_client, Client
-        # Uses service_role key from environment (bypasses RLS)
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        return supabase
+        
+        # 👇 ADD THIS
+        print("DEBUG SUPABASE_URL:", settings.SUPABASE_URL)
+        print("DEBUG SUPABASE_KEY (first 10 chars):", settings.SUPABASE_KEY[:10] if settings.SUPABASE_KEY else None)
+
+        client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        return client
     except ImportError:
-        logger.error("supabase library not installed. Run: pip install supabase")
+        logger.error("file_storage | supabase package not installed")
         return None
     except Exception as e:
-        logger.error(f"Failed to create Supabase client: {str(e)}")
+        logger.error("file_storage | failed to create Supabase client: %s", e)
         return None
 
 
-def upload_to_supabase_storage(file_bytes: bytes, file_type: str, content_hash: str) -> Optional[str]:
+def upload_to_supabase_storage(
+    file_bytes: bytes,
+    file_type: str,
+    content_hash: str,
+) -> str:
     """
-    Upload file to Supabase Storage.
+    Upload file_bytes to Supabase Storage and return the storage path.
 
-    Args:
-        file_bytes: The file content as bytes
-        file_type: File type (e.g., "audio", "pdf", "docx")
-        content_hash: SHA256 hash of the file (used for path)
+    Storage path format: {file_type}/{hash_prefix}/{hash}.{ext}
+    Files are content-addressed — uploading the same bytes twice is a no-op.
 
-    Returns:
-        Storage path in Supabase Storage, or None if upload fails
+    Raises:
+        RuntimeError:  if the Supabase client cannot be initialised.
+        StorageApiError: re-raised for 413 Payload Too Large so the caller
+                         can convert it to an HTTPException(413).
+        Exception:     for all other unrecoverable upload failures.
     """
     supabase = get_supabase_client()
     if not supabase:
-        logger.error("Cannot upload to Supabase Storage: Supabase client not available. Check SUPABASE_URL and SUPABASE_KEY environment variables.")
-        return None
+        raise RuntimeError(
+            "Supabase client unavailable — check SUPABASE_URL and SUPABASE_KEY"
+        )
+
+    settings = get_settings()
+    bucket = settings.SUPABASE_STORAGE_BUCKET
+    path = _storage_path(file_type, content_hash)
+    content_type = _CONTENT_TYPE_MAP.get(file_type, "application/octet-stream")
+
+    # Verify bucket exists before attempting upload
+    try:
+        available = {b.name for b in (supabase.storage.list_buckets() or [])}
+        if bucket not in available:
+            raise RuntimeError(
+                f"Storage bucket '{bucket}' not found. Available: {sorted(available)}"
+            )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        # Bucket listing failed (permissions, network) — proceed and let the
+        # upload itself surface the real error
+        logger.warning("file_storage | bucket check failed: %s — proceeding with upload", e)
 
     try:
-        # Create storage path using hash (first 2 chars for directory structure)
-        # Format: {file_type}/{hash_prefix}/{hash}.{ext}
-        hash_prefix = content_hash[:2]
-        # Determine file extension from file_type
-        ext_map = {
-            "audio": "m4a",  # Default for audio files
-            "pdf": "pdf",
-            "docx": "docx",
-            "doc": "doc",
-        }
-        ext = ext_map.get(file_type, "bin")
-        storage_path = f"{file_type}/{hash_prefix}/{content_hash}.{ext}"
-
-        try:
-            # Check if bucket exists and is accessible
-            try:
-                buckets = supabase.storage.list_buckets()
-                bucket_names = [b.name for b in buckets] if buckets else []
-                if SUPABASE_STORAGE_BUCKET not in bucket_names:
-                    logger.error(f"Supabase Storage bucket '{SUPABASE_STORAGE_BUCKET}' does not exist. Available buckets: {bucket_names}")
-                    return None
-            except Exception as bucket_check_error:
-                logger.warning(f"Could not verify bucket existence: {str(bucket_check_error)}")
-
-            # Upload file - use correct content-type for audio
-            content_type_map = {
-                "audio": "audio/mpeg",
-                "pdf": "application/pdf",
-                "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "doc": "application/msword",
-            }
-            content_type = content_type_map.get(file_type, "application/octet-stream")
-
-            # Supabase 2.27+ API: Pass raw bytes directly, not BytesIO
-            # The newer SDK expects bytes or file path, not BytesIO objects
-            # file_options only accepts string values (content-type), not booleans
-            # Note: upsert behavior is handled automatically by the SDK
-            try:
-                response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
-                    path=storage_path,
-                    file=file_bytes,  # Pass raw bytes directly
-                    file_options={"content-type": content_type}
-                )
-            except StorageApiError as storage_error:
-                # Handle Supabase Storage API errors (including 413 Payload Too Large)
-                error_str = str(storage_error)
-                # Check if it's a 413 error (Payload Too Large)
-                if "413" in error_str or "Payload too large" in error_str or "exceeded the maximum allowed size" in error_str:
-                    # Re-raise as-is so it can be caught and converted to HTTPException(413)
-                    raise
-                # Other StorageApiError (permissions, etc.)
-                logger.error(f"Supabase Storage API error: {str(storage_error)}", exc_info=True)
-                raise
-            except Exception as upload_error:
-                # If upload with content-type fails, try without file_options
-                error_str = str(upload_error)
-                if "bool" in error_str.lower() or "encode" in error_str.lower():
-                    logger.warning(f"Upload with file_options failed (format issue): {str(upload_error)}, trying without options")
-                    try:
-                        response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
-                            path=storage_path,
-                            file=file_bytes  # Pass raw bytes directly
-                        )
-                    except StorageApiError as fallback_storage_error:
-                        # Check if fallback also has 413 error
-                        fallback_str = str(fallback_storage_error)
-                        if "413" in fallback_str or "Payload too large" in fallback_str or "exceeded the maximum allowed size" in fallback_str:
-                            raise
-                        logger.error(f"Supabase Storage API error: {str(fallback_storage_error)}", exc_info=True)
-                        raise
-                    except Exception as fallback_error:
-                        logger.error(f"Upload failed even without options: {str(fallback_error)}", exc_info=True)
-                        raise upload_error
-                else:
-                    # Other errors (permissions, network, etc.)
-                    logger.error(f"Upload error: {str(upload_error)}", exc_info=True)
-                    raise
-
-            # Supabase returns a dict with 'path' key on success
-            logger.info(f"File uploaded to Supabase Storage: {storage_path}")
-            return storage_path
-        except Exception as upload_error:
-            # If file already exists (upsert), that's okay
-            error_str = str(upload_error).lower()
-            if "already exists" in error_str or "duplicate" in error_str or "conflict" in error_str:
-                logger.info(f"File already exists in Supabase Storage: {storage_path}")
-                return storage_path
-            else:
-                logger.error(f"Error uploading to Supabase Storage: {str(upload_error)}", exc_info=True)
-                raise
-
+        _attempt_upload(supabase, bucket, path, file_bytes, content_type)
+    except StorageApiError as e:
+        if _is_payload_too_large(e):
+            raise   # caller converts to HTTPException(413)
+        err_str = str(e).lower()
+        if "already exists" in err_str or "duplicate" in err_str or "conflict" in err_str:
+            logger.info("file_storage | file already exists path=%s", path)
+            return path
+        logger.error("file_storage | storage API error path=%s error=%s", path, e, exc_info=True)
+        raise
     except Exception as e:
-        logger.error(f"Error uploading to Supabase Storage: {str(e)}", exc_info=True)
-        return None
+        if _is_payload_too_large(e):
+            raise
+        err_str = str(e).lower()
+        if "already exists" in err_str or "duplicate" in err_str or "conflict" in err_str:
+            logger.info("file_storage | file already exists path=%s", path)
+            return path
+        logger.error("file_storage | upload failed path=%s error=%s", path, e, exc_info=True)
+        raise
+
+    logger.info("file_storage | uploaded path=%s file_type=%s size_bytes=%d",
+                path, file_type, len(file_bytes))
+    return path
 
 
 def get_or_create_file(
     db: Session,
     file_bytes: bytes,
     file_type: str,
-    filename: Optional[str] = None
+    filename: Optional[str] = None,
 ) -> Tuple[File, bool]:
     """
-    Get existing file by hash or create new file record.
-    Implements hash-based deduplication.
-
-    Args:
-        db: Database session
-        file_bytes: The file content as bytes
-        file_type: File type (e.g., "audio", "pdf", "docx")
-        filename: Original filename (optional)
+    Return an existing File record (by content hash) or create a new one.
 
     Returns:
-        Tuple of (File object, is_new: bool)
-        - is_new=True if file was just created
-        - is_new=False if existing file was reused
-    
+        (File, is_new) — is_new=True if the file was just uploaded.
+
     Raises:
-        HTTPException(413): If file is too large for Supabase Storage
-        Exception: For other upload failures
+        HTTPException(413): file exceeds Supabase Storage size limit.
+        Exception:          for all other upload / DB failures.
     """
-    # Compute hash
     content_hash = compute_file_hash(file_bytes)
-    size_bytes = len(file_bytes)
 
-    # Check if file with this hash already exists
-    existing_file = db.query(File).filter(File.content_hash == content_hash).first()
+    existing = db.query(File).filter(File.content_hash == content_hash).first()
+    if existing:
+        logger.info("file_storage | dedup hit file_id=%s hash=%s", existing.id, content_hash[:16])
+        return existing, False
 
-    if existing_file:
-        logger.info(f"File with hash {content_hash} already exists (file_id={existing_file.id}), reusing")
-        return existing_file, False
-
-    # File doesn't exist, create new record
-    # Upload to Supabase Storage
     try:
         storage_path = upload_to_supabase_storage(file_bytes, file_type, content_hash)
-    except StorageApiError as storage_error:
-        # Handle Supabase Storage API errors (including 413 Payload Too Large)
-        error_str = str(storage_error)
-        if "413" in error_str or "Payload too large" in error_str or "exceeded the maximum allowed size" in error_str:
-            from fastapi import HTTPException, status
-            size_mb = size_bytes / (1024 * 1024)
+    except StorageApiError as e:
+        if _is_payload_too_large(e):
+            from fastapi import HTTPException, status as http_status
+            size_mb = len(file_bytes) / (1024 * 1024)
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large for upload: {size_mb:.1f}MB. Maximum allowed size is 50MB."
-            ) from storage_error
-        # Re-raise other StorageApiError
+                status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large: {size_mb:.1f} MB (max 50 MB)",
+            ) from e
         raise
-    except Exception as upload_error:
-        # Check if it's a 413 Payload Too Large error (in case it's wrapped)
-        error_str = str(upload_error)
-        if "413" in error_str or "Payload too large" in error_str or "exceeded the maximum allowed size" in error_str:
-            from fastapi import HTTPException, status
-            size_mb = size_bytes / (1024 * 1024)
+    except Exception as e:
+        if _is_payload_too_large(e):
+            from fastapi import HTTPException, status as http_status
+            size_mb = len(file_bytes) / (1024 * 1024)
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large for upload: {size_mb:.1f}MB. Maximum allowed size is 50MB."
-            ) from upload_error
-        # Re-raise other errors
+                status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large: {size_mb:.1f} MB (max 50 MB)",
+            ) from e
         raise
 
-    if not storage_path:
-        error_msg = "Failed to upload file to Supabase Storage"
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            error_msg += " (SUPABASE_URL or SUPABASE_KEY not configured)"
-        raise Exception(error_msg)
-
-    # Create file record
     new_file = File(
         id=uuid.uuid4(),
         content_hash=content_hash,
         file_type=file_type,
         storage_path=storage_path,
-        size_bytes=size_bytes
+        size_bytes=len(file_bytes),
     )
-
     db.add(new_file)
-    db.flush()  # Flush to get the ID
+    db.flush()
 
-    logger.info(f"Created new file record (file_id={new_file.id}, hash={content_hash})")
+    logger.info("file_storage | created file_id=%s hash=%s", new_file.id, content_hash[:16])
     return new_file, True
 
 
 def get_file_by_id(db: Session, file_id: str) -> Optional[File]:
-    """
-    Get file record by ID.
-
-    Args:
-        db: Database session
-        file_id: File UUID as string
-
-    Returns:
-        File object or None if not found
-    """
-    # Convert string to UUID object for proper type matching with UUID(as_uuid=True)
+    """Return the File record for file_id, or None if not found / invalid UUID."""
     try:
-        file_uuid = uuid.UUID(file_id) if isinstance(file_id, str) else file_id
+        fid = uuid.UUID(file_id) if isinstance(file_id, str) else file_id
     except (ValueError, AttributeError):
-        # Invalid UUID format
         return None
-    return db.query(File).filter(File.id == file_uuid).first()
+    return db.query(File).filter(File.id == fid).first()
 
 
 def download_from_supabase_storage(storage_path: str) -> Optional[bytes]:
     """
-    Download file from Supabase Storage.
+    Download a file from Supabase Storage.
 
-    Args:
-        storage_path: Path in Supabase Storage
-
-    Returns:
-        File bytes or None if download fails
+    Returns file bytes, or None if the client is unavailable or the download fails.
     """
     supabase = get_supabase_client()
     if not supabase:
-        logger.error("Cannot download from Supabase Storage: Supabase client not available. Check SUPABASE_URL and SUPABASE_KEY environment variables.")
+        logger.error("file_storage | download skipped — client unavailable path=%s", storage_path)
         return None
 
+    bucket = get_settings().SUPABASE_STORAGE_BUCKET
     try:
-        response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).download(storage_path)
-        if response:
-            return response
-        else:
-            logger.error(f"Failed to download file from Supabase Storage: {storage_path}")
-            return None
+        data = supabase.storage.from_(bucket).download(storage_path)
+        if data:
+            return data
+        logger.error("file_storage | download returned empty response path=%s", storage_path)
+        return None
     except Exception as e:
-        logger.error(f"Error downloading from Supabase Storage: {str(e)}")
+        logger.error("file_storage | download failed path=%s error=%s", storage_path, e)
         return None

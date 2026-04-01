@@ -10,8 +10,11 @@ import TemplatesPage from "./pages/TemplatesPage/TemplatesPage";
 import AlteVorhabensbeschreibungPage from "./pages/AlteVorhabensbeschreibungPage/AlteVorhabensbeschreibungPage";
 import EditorPage from "./pages/EditorPage/EditorPage";
 import TemplateEditorPage from "./pages/TemplateEditorPage/TemplateEditorPage";
+import KnowledgeBaseAdminPage from "./pages/KnowledgeBaseAdminPage/KnowledgeBaseAdminPage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AdminGuard from "./components/AdminGuard";
 import Layout from "./components/Layout/Layout";
+import ProjectShell from "./components/ProjectShell/ProjectShell";
 import { debugLog } from "./utils/debugLog";
 
 function App() {
@@ -23,14 +26,14 @@ function App() {
       {/* Public route - login page */}
       <Route path="/login" element={<LoginPage />} />
       
-      {/* Protected routes with Layout - main navigation pages */}
+      {/* Project shell routes — three-column shell (icon rail + project list + content) */}
       <Route
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <Layout>
+            <ProjectShell>
               <DashboardPage />
-            </Layout>
+            </ProjectShell>
           </ProtectedRoute>
         }
       />
@@ -38,9 +41,11 @@ function App() {
         path="/funding-programs"
         element={
           <ProtectedRoute>
-            <Layout>
-              <FundingProgramsPage />
-            </Layout>
+            <AdminGuard>
+              <Layout>
+                <FundingProgramsPage />
+              </Layout>
+            </AdminGuard>
           </ProtectedRoute>
         }
       />
@@ -48,9 +53,11 @@ function App() {
         path="/companies"
         element={
           <ProtectedRoute>
-            <Layout>
-              <CompaniesPage />
-            </Layout>
+            <AdminGuard>
+              <Layout>
+                <CompaniesPage />
+              </Layout>
+            </AdminGuard>
           </ProtectedRoute>
         }
       />
@@ -78,9 +85,11 @@ function App() {
         path="/alte-vorhabensbeschreibung"
         element={
           <ProtectedRoute>
-            <Layout>
-              <AlteVorhabensbeschreibungPage />
-            </Layout>
+            <AdminGuard>
+              <Layout>
+                <AlteVorhabensbeschreibungPage />
+              </Layout>
+            </AdminGuard>
           </ProtectedRoute>
         }
       />
@@ -111,7 +120,7 @@ function App() {
         }
       />
       
-      {/* v2 Project routes - no Layout wrapper (full-screen workspace) */}
+      {/* v2 Project routes */}
       <Route
         path="/projects/new"
         element={
@@ -124,7 +133,23 @@ function App() {
         path="/projects/:id"
         element={
           <ProtectedRoute>
-            <ProjectWorkspacePage />
+            <ProjectShell>
+              <ProjectWorkspacePage />
+            </ProjectShell>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Admin routes — not in primary navigation */}
+      <Route
+        path="/admin/knowledge-base"
+        element={
+          <ProtectedRoute>
+            <AdminGuard>
+              <Layout>
+                <KnowledgeBaseAdminPage />
+              </Layout>
+            </AdminGuard>
           </ProtectedRoute>
         }
       />

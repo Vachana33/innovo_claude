@@ -19,7 +19,7 @@ export default function Layout({ children }: LayoutProps) {
   // #region agent log
   debugLog("Layout.tsx:Layout:BEFORE_USE_AUTH", "About to call useAuth", {}, "A");
   // #endregion
-  const { logout, userEmail } = useAuth();
+  const { logout, userEmail, isAdmin } = useAuth();
   // #region agent log
   debugLog("Layout.tsx:Layout:AFTER_USE_AUTH", "useAuth succeeded", { hasUserEmail: !!userEmail, userEmailLength: userEmail?.length || 0 }, "A");
   // #endregion
@@ -29,13 +29,10 @@ export default function Layout({ children }: LayoutProps) {
     navigate("/login", { replace: true });
   };
 
+  // Users see only Projects. Legacy pages (companies, documents, templates, etc.)
+  // are accessible via direct URL for backward compatibility but not shown in nav.
   const navItems = [
     { path: "/dashboard", label: "Projects", icon: "🗂️" },
-    { path: "/funding-programs", label: "Funding Programs", icon: "💼" },
-    { path: "/companies", label: "Companies", icon: "🏢" },
-    { path: "/documents", label: "Documents", icon: "📄" },
-    { path: "/templates", label: "Templates", icon: "📋" },
-    { path: "/alte-vorhabensbeschreibung", label: "Alte Vorhabensbeschreibung", icon: "📜" },
   ];
 
   const isActive = (path: string) => {
@@ -85,6 +82,22 @@ export default function Layout({ children }: LayoutProps) {
             </Link>
           ))}
         </nav>
+
+        {/* Admin section — only rendered for admin users */}
+        {isAdmin && (
+          <div className={styles.adminSection}>
+            <span className={styles.adminLabel}>Admin</span>
+            <Link
+              to="/admin/knowledge-base"
+              className={`${styles.navItem} ${
+                isActive("/admin/knowledge-base") ? styles.navItemActive : ""
+              }`}
+            >
+              <span className={styles.navIcon}>🗄️</span>
+              <span className={styles.navLabel}>Knowledge Base</span>
+            </Link>
+          </div>
+        )}
 
         {/* User Profile Section */}
         <div className={styles.userSection} data-testid="layout-user-section">

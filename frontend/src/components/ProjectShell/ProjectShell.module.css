@@ -1,0 +1,307 @@
+.shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--brand-surface);
+}
+
+/* ── Icon rail ── */
+.iconRail {
+  width: 56px;
+  background: var(--brand-rail-bg);
+  border-right: 1px solid var(--brand-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1rem 0;
+}
+
+.railTop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.railLogoWrap {
+  width: 34px;
+  height: 34px;
+  background: var(--brand-primary);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.railLogoText {
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+  font-family: var(--font-main);
+}
+
+.railIcon {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--brand-rail-icon);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.railIcon:hover {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+.railIconActive {
+  background: var(--brand-primary-light);
+  color: var(--brand-primary);
+}
+
+.railBottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.railAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-family: var(--font-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+}
+
+.railAvatar:hover { opacity: 0.8; }
+
+/* ── Project list panel ── */
+.projectPanel {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--brand-card-bg);
+  border-right: 1px solid var(--brand-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelLabel {
+  margin: 0;
+  padding: 1rem 1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--brand-text-medium);
+}
+
+.searchRow {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.searchWrap {
+  position: relative;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--brand-text-medium);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 0.45rem 0.6rem 0.45rem 2rem;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-family: var(--font-main);
+  background: var(--brand-bg-light);
+  color: var(--brand-text-dark);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.searchInput:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-primary-light);
+}
+
+.projectList {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.projectItem {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.65rem 1rem;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-main);
+  transition: background 0.12s;
+}
+
+.projectItem:hover {
+  background: var(--brand-bg-light);
+}
+
+.projectItemActive {
+  background: var(--brand-primary-light);
+  border-left-color: var(--brand-primary);
+}
+
+.projectItemActive:hover {
+  background: var(--brand-primary-light);
+}
+
+.projectCompany {
+  font-size: 0.855rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+  line-height: 1.3;
+}
+
+.projectItemActive .projectCompany {
+  color: var(--brand-primary-dark);
+}
+
+.projectTopic {
+  font-size: 0.78rem;
+  color: var(--brand-text-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.projectBadge {
+  margin-top: 0.25rem;
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.badgeComplete   { background: var(--status-generated-bg);   color: var(--status-generated-text); }
+.badgeReady      { background: var(--status-ready-bg);       color: var(--status-ready-text); }
+.badgeAssembling { background: var(--status-assembling-bg);  color: var(--status-assembling-text); }
+.badgeFailed     { background: var(--status-failed-bg);      color: var(--status-failed-text); }
+
+/* ── Panel footer ── */
+.panelFooter {
+  border-top: 1px solid var(--brand-border);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.newProjectBtn {
+  width: 100%;
+  padding: 0.6rem;
+  background: var(--brand-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: var(--font-main);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.newProjectBtn:hover {
+  background: var(--brand-primary-dark);
+}
+
+.userRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.userAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.userInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.userName {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--brand-text-dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.userEmail {
+  font-size: 0.72rem;
+  color: var(--brand-text-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logoutBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--brand-text-medium);
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.logoutBtn:hover { color: var(--brand-text-dark); }
+
+/* ── Content area ── */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}

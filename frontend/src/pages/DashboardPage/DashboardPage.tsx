@@ -1,133 +1,42 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiRequest } from "../../utils/api";
+import CreateProjectModal from "../../components/CreateProjectModal/CreateProjectModal";
 import styles from "./DashboardPage.module.css";
-
-interface ProjectListItem {
-  id: string;
-  company_id: number | null;
-  company_name: string | null;
-  funding_program_id: number | null;
-  funding_program_title: string | null;
-  topic: string;
-  status: string;
-  is_archived: boolean;
-  created_at: string;
-  updated_at: string;
-}
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
-
-  useEffect(() => {
-    fetchProjects();
-  }, [showArchived]);
-
-  async function fetchProjects() {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await apiRequest<ProjectListItem[]>(
-        `/projects?archived=${showArchived}`
-      );
-      setProjects(data);
-    } catch {
-      setError("Failed to load projects.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const filtered = projects.filter((p) =>
-    p.topic.toLowerCase().includes(search.toLowerCase())
-  );
-
-  function statusBadgeClass(status: string) {
-    if (status === "ready") return styles.statusReady;
-    if (status === "assembling") return styles.statusAssembling;
-    if (status === "failed") return styles.statusFailed;
-    return styles.statusPending;
-  }
+  const [showModal, setShowModal] = useState(false);
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div>
-          <h1 className={styles.title}>Projects</h1>
-          <p className={styles.subtitle}>
-            {showArchived ? "Archived projects" : "Your active projects"}
-          </p>
+      <div className={styles.empty}>
+        <div className={styles.emptyIconWrap}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
         </div>
-        <button
-          className={styles.newButton}
-          onClick={() => navigate("/projects/new")}
-        >
-          + New Project
+        <h2 className={styles.emptyTitle}>No Project Selected</h2>
+        <p className={styles.emptyHint}>
+          Select a project from the sidebar or create a new one to start generating your Vorhabensbeschreibung.
+        </p>
+        <button className={styles.createBtn} onClick={() => setShowModal(true)}>
+          + Create New Project
         </button>
       </div>
 
-      <div className={styles.toolbar}>
-        <input
-          type="text"
-          className={styles.searchInput}
-          placeholder="Search by topic..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+      {showModal && (
+        <CreateProjectModal
+          onClose={() => setShowModal(false)}
+          onCreated={(projectId) => {
+            setShowModal(false);
+            navigate(`/projects/${projectId}`);
+          }}
         />
-        <button
-          className={styles.archiveToggle}
-          onClick={() => setShowArchived((v) => !v)}
-        >
-          {showArchived ? "Show Active" : "Show Archived"}
-        </button>
-      </div>
-
-      {loading && <p className={styles.message}>Loading...</p>}
-      {error && <p className={styles.errorMessage}>{error}</p>}
-
-      {!loading && !error && filtered.length === 0 && (
-        <div className={styles.empty}>
-          <p>No projects found.</p>
-          <button
-            className={styles.newButton}
-            onClick={() => navigate("/projects/new")}
-          >
-            Create your first project
-          </button>
-        </div>
       )}
-
-      <div className={styles.grid}>
-        {filtered.map((project) => (
-          <div
-            key={project.id}
-            className={styles.card}
-            onClick={() => navigate(`/projects/${project.id}`)}
-          >
-            <div className={styles.cardHeader}>
-              <span className={`${styles.statusBadge} ${statusBadgeClass(project.status)}`}>
-                {project.status}
-              </span>
-            </div>
-            <p className={styles.cardTopic}>{project.topic}</p>
-            <p className={styles.cardDetail}>
-              {project.company_name ?? "—"} · {project.funding_program_title ?? "—"}
-            </p>
-            <p className={styles.cardMeta}>
-              {new Date(project.created_at).toLocaleDateString("de-DE", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              })}
-            </p>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

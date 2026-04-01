@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, defer, make_transient
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import ProgrammingError
 from app.database import get_db
-from app.models import Document, Company, User, FundingProgram
+from app.models import Document, Company, User, FundingProgram, ProjectContext
 from app.schemas import DocumentResponse, DocumentUpdate, ChatRequest, ChatResponse, ChatConfirmationRequest, DocumentListItem
 from app.dependencies import get_current_user
 from app.template_resolver import get_template_for_document
@@ -1060,7 +1060,8 @@ def _generate_batch_content(
     company_id: Optional[int] = None,
     funding_program_rules: Optional[Dict[str, Any]] = None,
     style_profile: Optional[Dict[str, Any]] = None,
-    max_retries: int = 2
+    max_retries: int = 2,
+    project_context=None,
 ) -> dict:
     """
     ROLE: INITIAL GENERATION
@@ -1082,142 +1083,25 @@ def _generate_batch_content(
     Returns a dictionary mapping section_id to generated content.
     Implements retry logic with strict JSON validation.
     """
-    # Build headings list for this batch (exclude milestone tables)
-    headings_list = []
-    section_ids = []
-    for section in batch_sections:
-        # Skip milestone tables - they should not be AI-generated
-        if section.get('type') == 'milestone_table':
-            continue
-        section_id = section.get('id', '')
-        section_title = section.get('title', '')
-        # Remove numbering prefix from title
-        clean_title = re.sub(r'^[\d.]+\.\s*', '', section_title)
-        headings_list.append(f"{section_id}. {clean_title}")
-        section_ids.append(section_id)
-
-    headings_text = "\n".join(headings_list)
-
-    # IMPORTANT: This prompt is for INITIAL CONTENT GENERATION only.
-    # It assumes empty sections and focuses on creation.
-    # Do NOT reuse this prompt for chat-based editing.
-    # For editing existing content, use _generate_section_content() instead.
-
-    # ============================================
-    # PROMPT STRUCTURE: Rules → Company → Style → Task
-    # ============================================
-
-    # 1. RULES SECTION (from funding program guidelines)
-    rules_section = ""
-    if funding_program_rules:
-        rules_parts = []
-        if funding_program_rules.get("eligibility_rules"):
-            rules_parts.append("Berechtigungskriterien:\n" + "\n".join(f"- {r}" for r in funding_program_rules["eligibility_rules"]))
-        if funding_program_rules.get("required_sections"):
-            rules_parts.append("Erforderliche Abschnitte:\n" + "\n".join(f"- {r}" for r in funding_program_rules["required_sections"]))
-        if funding_program_rules.get("forbidden_content"):
-            rules_parts.append("Verbotene Inhalte:\n" + "\n".join(f"- {r}" for r in funding_program_rules["forbidden_content"]))
-        if funding_program_rules.get("formal_requirements"):
-            rules_parts.append("Formale Anforderungen:\n" + "\n".join(f"- {r}" for r in funding_program_rules["formal_requirements"]))
-        if funding_program_rules.get("evaluation_criteria"):
-            rules_parts.append("Bewertungskriterien:\n" + "\n".join(f"- {r}" for r in funding_program_rules["evaluation_criteria"]))
-        if funding_program_rules.get("funding_limits"):
-            rules_parts.append("Fördergrenzen:\n" + "\n".join(f"- {r}" for r in funding_program_rules["funding_limits"]))
-        if funding_program_rules.get("deadlines"):
-            rules_parts.append("Fristen:\n" + "\n".join(f"- {r}" for r in funding_program_rules["deadlines"]))
-        if funding_program_rules.get("important_notes"):
-            rules_parts.append("Wichtige Hinweise:\n" + "\n".join(f"- {r}" for r in funding_program_rules["important_notes"]))
-        
-        if rules_parts:
-            rules_section = "=== 1. FÖRDERRICHTLINIEN UND REGELN ===\n\n" + "\n\n".join(rules_parts) + "\n\n"
-
-    # 2. COMPANY SOURCE SECTION (primary: company_profile, enrichment: cleaned texts)
-    company_context = _format_company_context_for_prompt(
-        company_profile=company_profile,
-        company_name=company_name,
-        website_clean_text=website_clean_text,
-        transcript_clean=transcript_clean,
-        company_id=company_id
-    )
-    company_section = f"=== 2. FIRMENINFORMATIONEN (FAKTENQUELLE) ===\n\n{company_context}\n\n"
-
-    # 3. STYLE GUIDE SECTION (from AlteVorhabensbeschreibungStyleProfile)
-    style_section = ""
-    if style_profile:
-        style_parts = []
-        
-        if style_profile.get("structure_patterns"):
-            patterns = style_profile["structure_patterns"]
-            if isinstance(patterns, list) and patterns:
-                style_parts.append("Strukturmuster:\n" + "\n".join(f"- {p}" for p in patterns))
-        
-        if style_profile.get("tone_characteristics"):
-            tone = style_profile["tone_characteristics"]
-            if isinstance(tone, list) and tone:
-                style_parts.append("Ton und Charakteristik:\n" + "\n".join(f"- {t}" for t in tone))
-        
-        if style_profile.get("writing_style_rules"):
-            rules = style_profile["writing_style_rules"]
-            if isinstance(rules, list) and rules:
-                style_parts.append("Schreibstil-Regeln:\n" + "\n".join(f"- {r}" for r in rules))
-        
-        if style_profile.get("storytelling_flow"):
-            flow = style_profile["storytelling_flow"]
-            if isinstance(flow, list) and flow:
-                style_parts.append("Erzählstruktur und Flow:\n" + "\n".join(f"- {f}" for f in flow))
-        
-        if style_profile.get("common_section_headings"):
-            headings = style_profile["common_section_headings"]
-            if isinstance(headings, list) and headings:
-                style_parts.append("Typische Abschnittsüberschriften:\n" + "\n".join(f"- {h}" for h in headings))
-        
-        if style_parts:
-            style_section = "=== 3. STIL-LEITFADEN ===\n\n" + "\n\n".join(style_parts) + "\n\n"
-            style_section += "WICHTIG: Folgen Sie diesen Stilrichtlinien STRENG bei der Generierung.\n"
-            style_section += "Passen Sie Ton, Struktur, Satzlänge und Erzählweise an diese Vorgaben an.\n\n"
+    # Phase 3: PromptBuilder wiring — build prompt via PromptBuilder
+    from app.services.prompt_builder import PromptBuilder
+    if project_context:
+        builder = PromptBuilder(context=project_context)
     else:
-        logger.warning("No style profile available, using default style guidelines")
-        style_section = "=== 3. STIL-LEITFADEN ===\n\n"
-        style_section += "- Verwenden Sie formelle Fördermittel-/Geschäftssprache\n"
-        style_section += "- Professioneller, überzeugender Ton\n"
-        style_section += "- Klare Absatzstruktur\n\n"
-
-    # 4. GENERATION TASK
-    task_section = f"""=== 4. GENERIERUNGSAUFGABE ===
-
-Zu generierende Abschnitte:
-{headings_text}
-
-AUFGABE:
-Generieren Sie für jeden oben genannten Abschnitt detaillierte, professionelle Inhalte.
-
-WICHTIGE RAND bedingungen:
-- Folgen Sie den Förderrichtlinien STRENG
-- Erfinden Sie KEINE Daten - verwenden Sie NUR die bereitgestellten Firmeninformationen
-- Folgen Sie dem Stil-Leitfaden STRENG
-- Schreiben Sie AUSSCHLIESSLICH auf Deutsch
-- Verwenden Sie NUR Absätze (keine Aufzählungspunkte)
-- Fügen Sie KEINE Platzhalter, Fragen oder Haftungsausschlüsse ein
-- Wenn Informationen unzureichend sind, generieren Sie plausible, professionelle Inhalte basierend auf dem verfügbaren Kontext
-
-"""
-
-    # Build complete prompt
-    prompt = f"""Sie sind ein Expertenberater, der bei der Erstellung einer "Vorhabensbeschreibung" für einen Förderantrag hilft.
-
-{rules_section}{company_section}{style_section}{task_section}
-
-AUSGABEFORMAT:
-Geben Sie NUR ein gültiges JSON-Objekt mit dieser exakten Struktur zurück:
-{{
-  "{section_ids[0] if section_ids else "section_id"}": "Generierter Absatztext...",
-  "{section_ids[1] if len(section_ids) > 1 else "section_id"}": "Generierter Absatztext..."
-}}
-
-Die Schlüssel MÜSSEN exakt mit den Abschnitts-IDs aus der Liste oben übereinstimmen (z.B. "0", "1", "1.1", "2.3", etc.).
-Die Werte müssen reiner deutscher Text in Absatzform sein.
-
-Geben Sie KEIN Markdown-Format, KEINE Erklärungen und KEINEN Text außerhalb des JSON-Objekts zurück. Geben Sie NUR das JSON-Objekt zurück."""
+        builder = PromptBuilder(
+            company_name=company_name,
+            company_profile=company_profile,
+            website_clean_text=website_clean_text,
+            transcript_clean=transcript_clean,
+            company_id=company_id,
+            funding_rules=funding_program_rules,
+            style_profile=style_profile,
+        )
+    # section_ids retained here for JSON response validation below
+    section_ids = [
+        s.get('id', '') for s in batch_sections if s.get('type') != 'milestone_table'
+    ]
+    prompt = builder.build_generation_prompt(batch_sections)
 
     # Retry logic with JSON validation
     approx_tokens = len(prompt) // 4
@@ -1434,6 +1318,13 @@ def generate_content(
         },
     )
 
+    # Phase 3: load ProjectContext for v2 documents (project_id is set)
+    _gen_project_context = None
+    if document.project_id:
+        _gen_project_context = db.query(ProjectContext).filter(
+            ProjectContext.project_id == document.project_id
+        ).first()
+
     # Initialize section content map (preserve existing content for all sections)
     section_content_map = {}
     for section in sections:
@@ -1462,7 +1353,8 @@ def generate_content(
                 company_id=company.id,  # Guardrail A: Pass company_id for logging
                 funding_program_rules=funding_program_rules,  # Rules and guidelines
                 style_profile=style_profile,  # Style guide
-                max_retries=2
+                max_retries=2,
+                project_context=_gen_project_context,
             )
 
             # Merge batch content into section map
@@ -2122,7 +2014,8 @@ def _generate_section_content(
     website_clean_text: Optional[str] = None,
     transcript_clean: Optional[str] = None,
     company_id: Optional[int] = None,
-    style_profile: Optional[Dict[str, Any]] = None
+    style_profile: Optional[Dict[str, Any]] = None,
+    project_context=None,
 ) -> str:
     """
     ROLE: SECTION EDITOR
@@ -2147,126 +2040,24 @@ def _generate_section_content(
 
     Returns the updated section content as a string.
     """
-    # Remove numbering prefix from title
-    clean_title = re.sub(r'^[\d.]+\.\s*', '', section_title)
-
-    # IMPORTANT:
-    # This prompt is for EDITING existing content only.
-    # Do NOT reuse this prompt for initial content generation.
-    # For initial generation, use _generate_batch_content() instead.
-    # This prompt assumes existing content exists and must be modified, not created.
-
-    # Format company context using cleaned data
-    company_context = _format_company_context_for_prompt(
-        company_profile=company_profile,
-        company_name=company_name,
-        website_clean_text=website_clean_text,
-        transcript_clean=transcript_clean,
-        company_id=company_id
-    )
-
-    # Build style guide section from style profile
-    style_guide = ""
-    if style_profile:
-        style_parts = []
-        
-        if style_profile.get("structure_patterns"):
-            patterns = style_profile["structure_patterns"]
-            if isinstance(patterns, list) and patterns:
-                style_parts.append("Strukturmuster:\n" + "\n".join(f"- {p}" for p in patterns))
-        
-        if style_profile.get("tone_characteristics"):
-            tone = style_profile["tone_characteristics"]
-            if isinstance(tone, list) and tone:
-                style_parts.append("Ton und Charakteristik:\n" + "\n".join(f"- {t}" for t in tone))
-        
-        if style_profile.get("writing_style_rules"):
-            rules = style_profile["writing_style_rules"]
-            if isinstance(rules, list) and rules:
-                style_parts.append("Schreibstil-Regeln:\n" + "\n".join(f"- {r}" for r in rules))
-        
-        if style_profile.get("storytelling_flow"):
-            flow = style_profile["storytelling_flow"]
-            if isinstance(flow, list) and flow:
-                style_parts.append("Erzählstruktur:\n" + "\n".join(f"- {f}" for f in flow))
-        
-        if style_parts:
-            style_guide = "=== STIL-LEITFADEN ===\n\n" + "\n\n".join(style_parts) + "\n\n"
-            style_guide += "WICHTIG: Folgen Sie diesen Stilrichtlinien bei der Überarbeitung.\n\n"
+    # Phase 3: PromptBuilder wiring — build prompt via PromptBuilder
+    from app.services.prompt_builder import PromptBuilder
+    if project_context:
+        builder = PromptBuilder(context=project_context)
     else:
-        style_guide = "=== STIL-LEITFADEN ===\n\n"
-        style_guide += "- Verwenden Sie formelle Fördermittel-/Geschäftssprache\n"
-        style_guide += "- Professioneller, überzeugender Ton\n"
-        style_guide += "- Klare Absatzstruktur\n\n"
-
-    # Build prompt with style guide
-    instruction_text = instruction or ""
-    prompt = f"""{style_guide}SIE SIND EIN REDAKTEUR, KEIN AUTOR.
-
-- Der folgende Abschnitt EXISTIERT bereits.
-- Ihre Aufgabe ist es, den bestehenden Text gezielt zu überarbeiten.
-- Ersetzen Sie NICHT den gesamten Inhalt, außer die Benutzeranweisung verlangt dies ausdrücklich.
-- Bewahren Sie Struktur, Kernaussagen und Tonalität des bestehenden Textes.
-
-PRIMÄRE GRUNDLAGE:
-
-- Der bestehende Abschnittstext ist die wichtigste Grundlage.
-- Änderungen müssen sich auf den vorhandenen Inhalt beziehen.
-- Fügen Sie neue Informationen nur hinzu, wenn sie logisch an den bestehenden Text anschließen.
-
-Aktueller Abschnitt:
-- Abschnitts-ID: {section_id}
-- Titel: {clean_title}
-- Aktueller Inhalt: {current_content}
-
-Benutzeranweisung: <user_instruction>
-{instruction_text}
-</user_instruction>
-
-KONTEXTNUTZUNG:
-
-- Verwenden Sie Firmeninformationen ausschließlich zur Präzisierung oder inhaltlichen Stützung.
-- Fügen Sie keine neuen Themen ein, die im bestehenden Abschnitt nicht bereits angelegt sind.
-- Vermeiden Sie generische Aussagen ohne Bezug zum aktuellen Abschnitt.
-
-Firmeninformationen (NUR ZUR STÜTZUNG):
-{company_context}
-
-UMGANG MIT ALLGEMEINEN ANWEISUNGEN:
-
-- Bei unspezifischen Anweisungen wie „Inhalt hinzufügen", „verbessern" oder „ausbauen":
-  - Erweitern Sie den bestehenden Text moderat (ca. +20–40%).
-  - Vertiefen Sie bestehende Aussagen, anstatt neue Themen zu eröffnen.
-
-- Bei spezifischen Anweisungen wie „kürzer", „präziser" oder „technischer":
-  - Passen Sie den Text entsprechend an, behalten Sie aber die Kernaussagen bei.
-
-- Bei Anweisungen wie „rewrite" oder „komplett neu":
-  - Formulieren Sie den Text neu, aber behalten Sie die inhaltlichen Kernpunkte bei.
-  - Erweitern Sie moderat (ca. +30–50%), nicht exzessiv.
-
-ABSCHNITTSFOKUS:
-
-- Der überarbeitete Text muss inhaltlich eindeutig zum Titel des Abschnitts passen.
-- Fügen Sie keine Themen hinzu, die zu anderen Abschnitten gehören.
-- Ändern Sie NICHT den Titel oder die Struktur des Abschnitts.
-
-STIL UND SPRACHE:
-
-- Schreiben Sie ausschließlich auf Deutsch.
-- Verwenden Sie einen sachlichen, formellen Fördermittel-Stil.
-- Schreiben Sie in zusammenhängenden Absätzen (keine Aufzählungen).
-- Keine Meta-Kommentare, keine Hinweise auf KI, keine Platzhalter.
-- Stellen Sie KEINE Fragen.
-- Fügen Sie KEINE Zitate oder Haftungsausschlüsse ein.
-- Erwähnen Sie KEINE vorherigen Versionen oder Änderungen.
-
-WICHTIG:
-
-- Ändern Sie NICHT den Abschnittstitel.
-- Fügen Sie KEINE neuen Abschnitte hinzu.
-- Der Inhalt muss mit den Firmeninformationen übereinstimmen.
-- Geben Sie NUR den überarbeiteten Absatztext zurück (kein JSON, kein Markdown, keine Erklärungen)."""
+        builder = PromptBuilder(
+            company_name=company_name,
+            company_profile=company_profile,
+            website_clean_text=website_clean_text,
+            transcript_clean=transcript_clean,
+            company_id=company_id,
+            style_profile=style_profile,
+        )
+    prompt = builder.build_edit_prompt(
+        section={"id": section_id, "title": section_title},
+        instruction=instruction,
+        current_content=current_content,
+    )
 
     approx_tokens = len(prompt) // 4
     logger.info("LLM section edit prompt size (chars): %s", len(prompt))
@@ -2458,51 +2249,25 @@ def _answer_question_with_context(
     document_content: str,
     website_summary: str,
     conversation_history: str,
-    company_name: str
+    company_name: str,
+    project_context=None,
 ) -> str:
     """
     Answer a user question using full context (document, website, conversation history).
     Returns a concise answer in formal business language (Fördermittel tone).
     """
-    # Build context prompt
-    context_parts = []
-
-    if document_content and document_content.strip() != "No content generated yet.":
-        context_parts.append(f"Generated Document Content:\n{document_content}")
-
-    if website_summary:
-        context_parts.append(f"Company Website Summary:\n{website_summary}")
-
-    if conversation_history:
-        context_parts.append(f"Previous Conversation:\n{conversation_history}")
-
-    context_text = "\n\n".join(context_parts)
-
-    user_query_text = user_query or ""
-    prompt = f"""Sie sind ein Expertenberater, der Fragen zu einem Förderantrag-Dokument (Vorhabensbeschreibung) beantwortet.
-
-KONTEXT:
-{context_text}
-
-Firmenname: {company_name}
-
-BENUTZERFRAGE: <user_instruction>
-{user_query_text}
-</user_instruction>
-
-AUFGABE:
-Beantworten Sie die Frage präzise und sachlich im formellen Fördermittel-Stil (Geschäftssprache).
-
-WICHTIGE REGELN:
-- Beziehen Sie sich AUSSCHLIESSLICH auf den bereitgestellten Kontext
-- Wenn die Antwort nicht im Kontext enthalten ist, sagen Sie dies klar
-- Verwenden Sie formelle, professionelle Sprache (Deutsch)
-- Seien Sie präzise und konkret
-- Keine Spekulationen oder Informationen außerhalb des Kontexts
-- Keine Meta-Kommentare oder Hinweise auf KI
-- Antworten Sie in zusammenhängenden Absätzen (keine Aufzählungen, außer wenn angebracht)
-
-Geben Sie NUR die Antwort zurück, ohne zusätzliche Erklärungen oder Formatierungen."""
+    # Phase 3: PromptBuilder wiring — build prompt via PromptBuilder
+    from app.services.prompt_builder import PromptBuilder
+    if project_context:
+        builder = PromptBuilder(context=project_context)
+    else:
+        builder = PromptBuilder(company_name=company_name)
+    prompt = builder.build_qa_prompt(
+        document_text=document_content,
+        website_summary=website_summary,
+        conversation_history=conversation_history,
+        user_query=user_query,
+    )
 
     approx_tokens = len(prompt) // 4
     logger.info("LLM Q&A prompt size (chars): %s", len(prompt))
@@ -2612,6 +2377,13 @@ def chat_with_document(
     _last_edited_sections = chat_request.last_edited_sections
     conversation_history = chat_request.conversation_history or []
 
+    # Phase 3: load ProjectContext for v2 documents (project_id is set)
+    _chat_project_context = None
+    if document.project_id:
+        _chat_project_context = db.query(ProjectContext).filter(
+            ProjectContext.project_id == document.project_id
+        ).first()
+
     # Check if message is a question
     is_question = _is_question(chat_request.message)
 
@@ -2652,7 +2424,8 @@ def chat_with_document(
                 document_content=context["document_content"],
                 website_summary=context["website_summary"],
                 conversation_history=context["conversation_history"],
-                company_name=company.name or "Unknown Company"
+                company_name=company.name or "Unknown Company",
+                project_context=_chat_project_context,
             )
 
             logger.info(f"Question answered successfully (answer length: {len(answer)})")
@@ -2784,7 +2557,8 @@ def chat_with_document(
                 website_clean_text=website_clean_text,  # Contextual enrichment
                 transcript_clean=transcript_clean,  # Contextual enrichment
                 company_id=company.id,  # Guardrail A: Pass company_id for logging
-                style_profile=style_profile  # Style guide
+                style_profile=style_profile,  # Style guide
+                project_context=_chat_project_context,
             )
 
             logger.info(f"LLM returned content length: {len(new_content)} characters")

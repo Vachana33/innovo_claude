@@ -1,5 +1,6 @@
-from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Table, UniqueConstraint, JSON, Text, Boolean, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Table, UniqueConstraint, Text, Boolean, Index
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -61,7 +62,7 @@ class Company(Base):
     user_email = Column(String, ForeignKey("users.email"), nullable=False, index=True)
 
     # Structured company profile (Phase 2A: Extract → Store → Reference)
-    company_profile = Column(JSON, nullable=True)  # Structured extracted company information
+    company_profile = Column(JSONB, nullable=True)  # Structured extracted company information
     extraction_status = Column(String, nullable=True)  # "pending", "extracted", "failed"
     extracted_at = Column(DateTime(timezone=True), nullable=True)  # Timestamp when extraction completed
 
@@ -90,8 +91,8 @@ class Document(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
     type = Column(String, nullable=False, index=True)  # "vorhabensbeschreibung", "vorkalkulation"
-    content_json = Column(JSON, nullable=False)  # Stores sections array as JSON
-    chat_history = Column(JSON, nullable=True)  # Stores chat messages as JSON array
+    content_json = Column(JSONB, nullable=False)  # Stores sections array as JSON
+    chat_history = Column(JSONB, nullable=True)  # Stores chat messages as JSON array
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     # Phase 2.6: Headings confirmation flag
@@ -180,7 +181,7 @@ class UserTemplate(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
-    template_structure = Column(JSON, nullable=False)  # Contains "sections" key
+    template_structure = Column(JSONB, nullable=False)  # Contains "sections" key
     user_email = Column(String, ForeignKey("users.email"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -249,7 +250,7 @@ class FundingProgramGuidelinesSummary(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     funding_program_id = Column(Integer, ForeignKey("funding_programs.id"), nullable=False, unique=True, index=True)
-    rules_json = Column(JSON, nullable=False)  # Structured rules extracted from guidelines
+    rules_json = Column(JSONB, nullable=False)  # Structured rules extracted from guidelines
     source_file_hash = Column(Text, nullable=False)  # Combined hash of all guideline files
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -283,7 +284,7 @@ class AlteVorhabensbeschreibungStyleProfile(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     combined_hash = Column(Text, unique=True, nullable=False, index=True)  # SHA256 hash of all document content hashes
-    style_summary_json = Column(JSON, nullable=False)  # Extracted writing style patterns
+    style_summary_json = Column(JSONB, nullable=False)  # Extracted writing style patterns
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -302,7 +303,7 @@ class Project(Base):
     # Phase 2: free-text company name for projects created without a pre-existing Company record
     company_name = Column(Text, nullable=True)
     # Phase 2: optional JSON overrides for template structure at project level
-    template_overrides_json = Column(Text, nullable=True)
+    template_overrides_json = Column(JSONB, nullable=True)
     topic = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="assembling")  # assembling | ready | generating | complete
     is_archived = Column(Boolean, nullable=False, default=False)
@@ -329,18 +330,106 @@ class ProjectContext(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True)
-    company_profile_json = Column(Text, nullable=True)
-    funding_rules_json = Column(Text, nullable=True)
-    domain_research_json = Column(Text, nullable=True)
-    retrieved_examples_json = Column(Text, nullable=True)
-    style_profile_json = Column(Text, nullable=True)
-    website_text_preview = Column(Text, nullable=True)
+    company_profile_json = Column(JSONB, nullable=True)
+    funding_rules_json = Column(JSONB, nullable=True)
+    domain_research_json = Column(JSONB, nullable=True)
+    retrieved_examples_json = Column(JSONB, nullable=True)
+    style_profile_json = Column(JSONB, nullable=True)
+    website_text_preview = Column(Text, nullable=True)  # plain text, not JSON
     context_hash = Column(String, nullable=True)
     # Phase 2: assembly tracking fields
     completeness_score = Column(Integer, nullable=True)
     company_discovery_status = Column(String, nullable=True)  # "found" | "partial" | "not_found"
-    assembly_progress_json = Column(JSON, nullable=True)  # per-stage progress map
+    assembly_progress_json = Column(JSONB, nullable=True)  # per-stage progress map
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     project = relationship("Project", back_populates="context")
+
+
+class ProjectChatMessage(Base):
+    """
+    A single chat turn in the project-scoped chatbot conversation.
+    Persisted per project; role is "user" or "assistant".
+    """
+    __tablename__ = "project_chat_messages"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+# Phase 4: Knowledge Base
+
+class FundingProgramSource(Base):
+    """
+    A web URL that is periodically scraped and indexed into the knowledge base
+    as 'guideline' category chunks.  One source can produce one KnowledgeBaseDocument
+    (and its associated chunks).  The content_hash field enables change detection so
+    unchanged pages are not re-indexed on every scrape run.
+    """
+    __tablename__ = "funding_program_sources"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    funding_program_id = Column(
+        Integer, ForeignKey("funding_programs.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    url = Column(String, nullable=False)
+    label = Column(String, nullable=True)                         # optional human-readable label
+    status = Column(String, nullable=False, default="pending")    # pending | scraping | done | failed
+    last_scraped_at = Column(DateTime(timezone=True), nullable=True)
+    content_hash = Column(String, nullable=True)                  # SHA-256 of scraped text
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    funding_program = relationship("FundingProgram", backref="sources")
+
+
+class KnowledgeBaseDocument(Base):
+    """
+    Document registered in the knowledge base.
+    Can originate from two sources:
+      1. Admin file upload  — file_id is set, source_id is NULL
+      2. Web scrape via FundingProgramSource — source_id is set, file_id is NULL
+    Chunks and embeddings are derived from this document via the indexing pipeline.
+    """
+    __tablename__ = "knowledge_base_documents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filename = Column(String, nullable=False)
+    category = Column(String, nullable=False, index=True)   # "example" | "guideline" | "domain" | "other"
+    program_tag = Column(String, nullable=True, index=True) # optional: used to scope retrieval per program
+    # Nullable — NULL for scrape-sourced docs; set for upload-sourced docs
+    file_id = Column(UUID(as_uuid=True), ForeignKey("files.id", ondelete="RESTRICT"), nullable=True)
+    # Nullable — set only for web-scrape sourced docs; NULL for uploaded docs
+    source_id = Column(UUID(as_uuid=True), ForeignKey("funding_program_sources.id", ondelete="CASCADE"), nullable=True, index=True)
+    uploaded_by = Column(String, ForeignKey("users.email", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    file = relationship("File", backref="knowledge_base_documents")
+    source = relationship("FundingProgramSource", backref="kb_document")
+    chunks = relationship("KnowledgeBaseChunk", back_populates="document",
+                          cascade="all, delete-orphan")
+
+
+class KnowledgeBaseChunk(Base):
+    """
+    A text chunk derived from a KnowledgeBaseDocument.
+    The embedding column holds a 1536-dimensional pgvector vector produced by
+    text-embedding-3-small. Similarity search uses cosine distance (<=>).
+    """
+    __tablename__ = "knowledge_base_chunks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True),
+                         ForeignKey("knowledge_base_documents.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    chunk_text = Column(Text, nullable=False)
+    embedding = Column(Vector(1536), nullable=True)  # nullable until indexing completes
+    chunk_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    document = relationship("KnowledgeBaseDocument", back_populates="chunks")

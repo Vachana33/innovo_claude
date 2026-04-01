@@ -14,7 +14,6 @@ Stage weights (must sum to 100):
     examples         15
     style            15
 """
-import json
 import logging
 from typing import Optional
 
@@ -88,12 +87,12 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
                 company = db.query(Company).filter(Company.id == project.company_id).first()
                 if company:
                     if company.company_profile:
-                        company_profile = json.dumps(company.company_profile)
+                        company_profile = company.company_profile
                         discovery_status = "found"
                     elif company.website_clean_text or company.transcript_clean:
                         # Company exists but extraction hasn't run yet — partial
                         preview = (company.website_clean_text or company.transcript_clean or "")[:30_000]
-                        company_profile = json.dumps({"raw_preview": preview})
+                        company_profile = {"raw_preview": preview}
                         discovery_status = "partial"
                     else:
                         discovery_status = "partial"
@@ -107,10 +106,7 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
                 # generate_content() can load company data via company_id FK.
                 overrides: dict = {}
                 if project.template_overrides_json:
-                    try:
-                        overrides = json.loads(project.template_overrides_json)
-                    except Exception:
-                        pass
+                    overrides = project.template_overrides_json
 
                 company_website = overrides.get("company_website")
                 company_description = overrides.get("company_description")
@@ -148,7 +144,7 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
                 db.commit()
                 db.refresh(company)
 
-                company_profile = json.dumps(company.company_profile)
+                company_profile = company.company_profile
                 discovery_status = "partial"  # Research Agent (Phase 5) will upgrade this to "found"
 
             ctx.company_profile_json = company_profile
@@ -177,7 +173,7 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
                     .first()
                 )
                 if summary and summary.rules_json:
-                    funding_rules = json.dumps(summary.rules_json)
+                    funding_rules = summary.rules_json
 
             ctx.funding_rules_json = funding_rules
             scores["funding_rules"] = CONTEXT_SCORE_WEIGHTS["funding_rules"] if funding_rules else 0
@@ -206,18 +202,54 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
             _write_progress(ctx, db, "domain_research", "failed")
 
         # ------------------------------------------------------------------ #
-        # Stage 4 — Historical examples (stub — Phase 4 wires the Knowledge Base)
+        # Stage 4 — Retrieved examples (Knowledge Base — Phase 4)
         # ------------------------------------------------------------------ #
         try:
             _write_progress(ctx, db, "examples", "running")
-            ctx.retrieved_examples_json = None
-            scores["examples"] = 0
-            _write_progress(ctx, db, "examples", "done", "stub")
+            from app.services.knowledge_base_retriever import retrieve_kb_context
+            from app.models import FundingProgram
+
+            # Build a semantic query from topic + company name
+            query_parts = [project.topic]
+            if project.company_name:
+                query_parts.append(project.company_name)
+            elif ctx.company_profile_json:
+                name = ctx.company_profile_json.get("company_name")
+                if name:
+                    query_parts.append(name)
+            query = " ".join(query_parts)
+
+            # Derive program_tag from the linked FundingProgram title.
+            # Convention: the admin must use the exact FundingProgram.title as the
+            # program_tag when uploading KB documents (e.g. "ZIM", "WTT Fonds").
+            # If no tagged documents exist, retrieve_kb_context falls back to unfiltered.
+            program_tag = None
+            if project.funding_program_id:
+                fp = db.query(FundingProgram).filter(
+                    FundingProgram.id == project.funding_program_id
+                ).first()
+                if fp:
+                    program_tag = fp.title
+
+            kb_context = retrieve_kb_context(
+                query=query,
+                db=db,
+                program_tag=program_tag,
+            )
+
+            has_any = any(kb_context.get(k) for k in ("examples", "guidelines", "domain"))
+            ctx.retrieved_examples_json = kb_context if has_any else None
+            scores["examples"] = CONTEXT_SCORE_WEIGHTS["examples"] if has_any else 0
+
+            total_chunks = sum(len(kb_context.get(k) or []) for k in ("examples", "guidelines", "domain"))
+            _write_progress(ctx, db, "examples", "done",
+                            f"{total_chunks}_chunks" if has_any else "no_kb_content")
             db.commit()
 
         except Exception:
             logger.exception("context_assembler | stage=examples project_id=%s", project_id)
             scores["examples"] = 0
+            ctx.retrieved_examples_json = None
             _write_progress(ctx, db, "examples", "failed")
 
         # ------------------------------------------------------------------ #
@@ -233,7 +265,7 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
                 .first()
             )
             if latest_style and latest_style.style_summary_json:
-                style_profile = json.dumps(latest_style.style_summary_json)
+                style_profile = latest_style.style_summary_json
 
             ctx.style_profile_json = style_profile
             scores["style"] = CONTEXT_SCORE_WEIGHTS["style"] if style_profile else 0
@@ -259,18 +291,32 @@ def assemble_project_context(project_id: str, db_url: str) -> None:
             if project.company_id:
                 existing_doc = db.query(Document).filter(Document.project_id == project_id).first()
                 if not existing_doc:
+                    # Load template sections — document must never be created with empty structure
+                    try:
+                        from app.template_resolver import resolve_template
+                        _tmpl = resolve_template("system", "wtt_v1", db)
+                        _tmpl_sections = [
+                            {**s, "content": s.get("content", "")}
+                            for s in _tmpl.get("sections", [])
+                        ]
+                    except Exception:
+                        logger.warning(
+                            "context_assembler | failed to load wtt_v1 — using empty sections project_id=%s",
+                            project_id,
+                        )
+                        _tmpl_sections = []
                     doc = Document(
                         company_id=project.company_id,
                         funding_program_id=project.funding_program_id,
                         type="vorhabensbeschreibung",
-                        content_json={"sections": []},
+                        content_json={"sections": _tmpl_sections},
                         project_id=project_id,
                     )
                     db.add(doc)
                     db.commit()
                     logger.info(
-                        "context_assembler | created document project_id=%s company_id=%s",
-                        project_id, project.company_id,
+                        "context_assembler | created document project_id=%s company_id=%s sections=%d",
+                        project_id, project.company_id, len(_tmpl_sections),
                     )
         except Exception:
             logger.exception("context_assembler | failed to create document project_id=%s", project_id)

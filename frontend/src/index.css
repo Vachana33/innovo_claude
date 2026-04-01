@@ -1,13 +1,43 @@
 :root {
+  /* Legacy gold tokens — used by LoginPage */
   --brand-gold: #a28d54;
   --brand-gold-dark: #7b6b3f;
   --brand-gold-light: #f6f2e7;
 
-  --brand-text-dark: #1a1a1a;
-  --brand-text-medium: #333333;
+  /* Innovo brand — gold from logo */
+  --brand-primary: #a28d54;
+  --brand-primary-dark: #7b6b3f;
+  --brand-primary-light: #fbf7ee;
+  --brand-primary-border: #d4c499;
 
-  --brand-border: #d6d0c2;
-  --brand-bg-light: #faf8f3;
+  /* Shell chrome — white rail */
+  --brand-rail-bg: #ffffff;
+  --brand-rail-icon: #94a3b8;
+  --brand-rail-icon-active: #a28d54;
+
+  /* Surfaces */
+  --brand-surface: #f1f3f5;
+  --brand-bg-light: #f8f9fa;
+  --brand-card-bg: #ffffff;
+
+  /* Text */
+  --brand-text-dark: #0f172a;
+  --brand-text-medium: #64748b;
+
+  /* Borders */
+  --brand-border: #e2e8f0;
+
+  /* Functional status colors */
+  --status-generated-bg: #ecfeff;
+  --status-generated-text: #0e7490;
+  --status-ready-bg: #eef2ff;
+  --status-ready-text: #4338ca;
+  --status-assembling-bg: #f1f5f9;
+  --status-assembling-text: #64748b;
+  --status-failed-bg: #fef2f2;
+  --status-failed-text: #dc2626;
+  --status-complete-bg: #f0fdf4;
+  --status-complete-text: #15803d;
 
   --font-main: "Helvetica", system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;

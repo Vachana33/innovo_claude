@@ -48,9 +48,10 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 from app.database import engine, Base  # noqa: E402
-from app.routers import auth, funding_programs, companies, documents, templates, alte_vorhabensbeschreibung, projects  # noqa: E402
+from app.routers import auth, funding_programs, companies, documents, templates, alte_vorhabensbeschreibung, projects, project_chat, knowledge_base  # noqa: E402
 from app.posthog_client import init_posthog, shutdown_posthog, capture_event  # noqa: E402
 from app.observability import set_request_id, reset_request_id, get_request_id  # noqa: E402
+from apscheduler.schedulers.background import BackgroundScheduler  # noqa: E402
 
 # Create database tables
 # Note: In production (PostgreSQL on Render), use Alembic migrations instead
@@ -69,9 +70,27 @@ else:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: initialize and cleanly shut down PostHog."""
+    """Application lifespan: initialize PostHog and the weekly scraper scheduler."""
     init_posthog()
+
+    # Weekly cron: scrape all registered funding source URLs every Monday at 02:00
+    from app.services.funding_source_scraper import scrape_all_sources_task
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(
+        scrape_all_sources_task,
+        trigger="cron",
+        day_of_week="mon",
+        hour=2,
+        minute=0,
+        id="weekly_funding_source_scrape",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("APScheduler started — weekly funding source scrape scheduled (Mon 02:00)")
+
     yield
+
+    scheduler.shutdown(wait=False)
     shutdown_posthog()
 
 
@@ -217,6 +236,8 @@ app.include_router(documents.router, tags=["documents"])
 app.include_router(templates.router, tags=["templates"])
 app.include_router(alte_vorhabensbeschreibung.router, tags=["alte-vorhabensbeschreibung"])
 app.include_router(projects.router, tags=["projects"])
+app.include_router(project_chat.router, tags=["project-chat"])
+app.include_router(knowledge_base.router, tags=["knowledge-base"])
 
 # Serve frontend static files if dist directory exists (for production deployment)
 # Frontend dist directory should be copied to backend/static during Docker build

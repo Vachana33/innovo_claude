@@ -33,7 +33,8 @@ from app.models import (  # noqa: F401, E402
     User, FundingProgram, Company, Document, funding_program_companies,
     File, AudioTranscriptCache, WebsiteTextCache, DocumentTextCache,
     FundingProgramDocument, UserTemplate, FundingProgramGuidelinesSummary,
-    CompanyDocument, AlteVorhabensbeschreibungDocument, AlteVorhabensbeschreibungStyleProfile
+    CompanyDocument, AlteVorhabensbeschreibungDocument, AlteVorhabensbeschreibungStyleProfile,
+    KnowledgeBaseDocument, KnowledgeBaseChunk,
 )
 
 # this is the Alembic Config object, which provides

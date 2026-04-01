@@ -59,6 +59,7 @@ export async function apiRequest<T = unknown>(
       // #endregion
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(USER_EMAIL_KEY);
+      localStorage.removeItem("innovo_is_admin");
       throw new Error("AUTH_EXPIRED");
     }
 
@@ -165,6 +166,7 @@ export async function apiUploadFile(
     if (response.status === 401) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(USER_EMAIL_KEY);
+      localStorage.removeItem("innovo_is_admin");
       throw new Error("AUTH_EXPIRED");
     }
 
@@ -217,6 +219,7 @@ export async function apiUploadFilePut(
     if (response.status === 401) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(USER_EMAIL_KEY);
+      localStorage.removeItem("innovo_is_admin");
       throw new Error("AUTH_EXPIRED");
     }
 
@@ -267,6 +270,7 @@ export async function apiUploadFiles(
     if (response.status === 401) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(USER_EMAIL_KEY);
+      localStorage.removeItem("innovo_is_admin");
       throw new Error("AUTH_EXPIRED");
     }
 

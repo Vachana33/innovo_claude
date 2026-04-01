@@ -65,12 +65,12 @@
 }
 
 .navItemActive {
-  background-color: #2563eb;
+  background-color: var(--brand-primary);
   color: #fff;
 }
 
 .navItemActive:hover {
-  background-color: #1d4ed8;
+  background-color: var(--brand-primary-dark);
 }
 
 .navIcon {
@@ -81,6 +81,23 @@
 
 .navLabel {
   flex: 1;
+}
+
+/* Admin Section */
+.adminSection {
+  padding: 0 0.75rem 0.5rem;
+  border-top: 1px solid var(--brand-border);
+}
+
+.adminLabel {
+  display: block;
+  padding: 0.6rem 1rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-text-medium);
+  user-select: none;
 }
 
 /* User Section */
@@ -97,7 +114,7 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background-color: #2563eb;
+  background-color: var(--brand-primary);
   color: #fff;
   display: flex;
   align-items: center;
