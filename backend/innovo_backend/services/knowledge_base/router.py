@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from sqlalchemy.orm import Session
 
 from innovo_backend.shared.database import get_db, SessionLocal
-from innovo_backend.shared.dependencies import get_current_user
+from innovo_backend.shared.dependencies import get_current_user, require_admin
 from innovo_backend.shared.file_storage import get_or_create_file
 from innovo_backend.shared.funding_program_documents import get_file_type_from_filename
 from innovo_backend.shared.models import KnowledgeBaseDocument, KnowledgeBaseChunk, FundingProgramSource, FundingProgram, User
@@ -30,11 +30,6 @@ def _index_document_in_background(document_id) -> None:
         logger.exception("knowledge_base | background indexing failed document_id=%s", document_id)
     finally:
         db.close()
-
-
-def _require_admin(current_user: User) -> None:
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 def _scrape_source_in_background(source_id) -> None:
@@ -59,7 +54,7 @@ def upload_knowledge_base_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
 
     filename = file.filename or "unknown"
     file_type = get_file_type_from_filename(filename)
@@ -102,7 +97,7 @@ def list_knowledge_base_documents(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     return db.query(KnowledgeBaseDocument).order_by(KnowledgeBaseDocument.created_at.desc()).all()
 
 
@@ -112,7 +107,7 @@ def delete_knowledge_base_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
 
     doc = db.query(KnowledgeBaseDocument).filter(KnowledgeBaseDocument.id == document_id).first()
     if not doc:
@@ -131,7 +126,7 @@ def add_funding_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
 
     program = db.query(FundingProgram).filter(FundingProgram.id == payload.funding_program_id).first()
     if not program:
@@ -164,7 +159,7 @@ def list_funding_sources(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     return db.query(FundingProgramSource).order_by(FundingProgramSource.created_at.desc()).all()
 
 
@@ -174,7 +169,7 @@ def delete_funding_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
 
     source = db.query(FundingProgramSource).filter(FundingProgramSource.id == source_id).first()
     if not source:
@@ -193,7 +188,7 @@ def refresh_funding_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
 
     source = db.query(FundingProgramSource).filter(FundingProgramSource.id == source_id).first()
     if not source:

@@ -49,3 +49,22 @@ def get_current_user(
 
     logger.info(f"User authenticated: {email}")
     return user
+
+
+def require_admin(current_user) -> None:
+    """Call at the top of any admin-only endpoint after get_current_user().
+
+    Raises HTTP 403 with a consistent message if the user is not an admin.
+    Import and call pattern (same as get_current_user):
+
+        from innovo_backend.shared.dependencies import get_current_user, require_admin
+
+        def my_endpoint(current_user: User = Depends(get_current_user)):
+            require_admin(current_user)
+            ...
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )

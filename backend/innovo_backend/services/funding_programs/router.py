@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from innovo_backend.shared.database import get_db
 from innovo_backend.shared.models import FundingProgram, User, FundingProgramDocument, File as FileModel, FundingProgramGuidelinesSummary, funding_program_companies
 from innovo_backend.shared.schemas import FundingProgramCreate, FundingProgramResponse, FundingProgramDocumentResponse, FundingProgramDocumentListResponse
-from innovo_backend.shared.dependencies import get_current_user
+from innovo_backend.shared.dependencies import get_current_user, require_admin
 from innovo_backend.shared.file_storage import get_or_create_file
 from innovo_backend.shared.document_extraction import extract_document_text
 from innovo_backend.shared.processing_cache import get_cached_document_text
@@ -24,8 +24,7 @@ def create_funding_program(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
 
     if not program_data.title or not program_data.title.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title is required")
@@ -78,8 +77,7 @@ def update_funding_program(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
 
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
@@ -113,8 +111,7 @@ def delete_funding_program(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
 
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
@@ -162,8 +159,7 @@ async def upload_funding_program_guidelines(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     from innovo_backend.shared.guidelines_processing import process_guidelines_for_funding_program  # noqa: PLC0415
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
@@ -228,8 +224,7 @@ def get_funding_program_documents(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,
         FundingProgram.user_email == current_user.email,
@@ -267,8 +262,7 @@ def delete_funding_program_document(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     from innovo_backend.shared.guidelines_processing import process_guidelines_for_funding_program  # noqa: PLC0415
     funding_program = db.query(FundingProgram).filter(
         FundingProgram.id == funding_program_id,

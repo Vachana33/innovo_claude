@@ -7,7 +7,7 @@ from innovo_backend.shared.models import FundingProgram, Company, Document, fund
 from innovo_backend.shared.models import File as FileModel
 from innovo_backend.shared.schemas import CompanyCreate, CompanyResponse, CompanyDocumentResponse, CompanyDocumentListResponse
 from innovo_backend.shared.extraction import extract_company_profile
-from innovo_backend.shared.dependencies import get_current_user
+from innovo_backend.shared.dependencies import get_current_user, require_admin
 from innovo_backend.shared.file_storage import get_or_create_file, get_file_by_id, download_from_supabase_storage, compute_file_hash
 from innovo_backend.shared.document_extraction import extract_document_text
 from innovo_backend.shared.processing_cache import get_cached_document_text
@@ -340,8 +340,7 @@ def create_company(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     if not company_data.name or not company_data.name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company name is required")
 
@@ -439,8 +438,7 @@ def update_company(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     company = db.query(Company).filter(Company.id == company_id, Company.user_email == current_user.email).first()
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
@@ -467,8 +465,7 @@ def delete_company(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     company = db.query(Company).filter(Company.id == company_id, Company.user_email == current_user.email).first()
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
@@ -495,8 +492,7 @@ async def upload_company_documents(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    require_admin(current_user)
     company = db.query(Company).filter(Company.id == company_id, Company.user_email == current_user.email).first()
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")

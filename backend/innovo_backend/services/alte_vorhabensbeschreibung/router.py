@@ -14,7 +14,7 @@ from innovo_backend.shared.models import (
     File as FileModel,
     User,
 )
-from innovo_backend.shared.dependencies import get_current_user
+from innovo_backend.shared.dependencies import get_current_user, require_admin
 from innovo_backend.shared.file_storage import get_or_create_file
 from innovo_backend.shared.document_extraction import extract_document_text
 from innovo_backend.shared.processing_cache import get_cached_document_text
@@ -25,11 +25,6 @@ from innovo_backend.shared.schemas import AlteVorhabensbeschreibungDocumentRespo
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _require_admin(current_user: User) -> None:
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 def regenerate_style_profile(db: Session) -> Optional[AlteVorhabensbeschreibungStyleProfile]:
@@ -98,7 +93,7 @@ async def upload_alte_vorhabensbeschreibung_documents(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
 
@@ -169,7 +164,7 @@ def get_alte_vorhabensbeschreibung_documents(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     documents = db.query(AlteVorhabensbeschreibungDocument).filter(
         AlteVorhabensbeschreibungDocument.uploaded_by == current_user.email
     ).order_by(AlteVorhabensbeschreibungDocument.uploaded_at.desc()).all()
@@ -196,7 +191,7 @@ async def update_alte_vorhabensbeschreibung_document(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     document = db.query(AlteVorhabensbeschreibungDocument).filter(
         AlteVorhabensbeschreibungDocument.id == document_id,
         AlteVorhabensbeschreibungDocument.uploaded_by == current_user.email,
@@ -253,7 +248,7 @@ def delete_alte_vorhabensbeschreibung_document(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     document = db.query(AlteVorhabensbeschreibungDocument).filter(
         AlteVorhabensbeschreibungDocument.id == document_id,
         AlteVorhabensbeschreibungDocument.uploaded_by == current_user.email,
@@ -282,7 +277,7 @@ def get_style_profile(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     documents = db.query(AlteVorhabensbeschreibungDocument).all()
 
     user_documents = db.query(AlteVorhabensbeschreibungDocument).filter(
@@ -329,7 +324,7 @@ def regenerate_style(
     db: Session = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ):
-    _require_admin(current_user)
+    require_admin(current_user)
     try:
         profile = regenerate_style_profile(db)
 
